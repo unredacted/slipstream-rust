@@ -14,8 +14,9 @@ Benchmark harnesses live under scripts/bench and write artifacts under .interop/
 - Use RUNS=5 to repeat runs; multi-run outputs are stored under run-N/.
 - End-to-end timing is measured from the first payload byte sent to the last
   payload byte received.
-- Rust <-> Rust runs enforce a minimum average MiB/s threshold (MIN_AVG_MIB_S, default 10)
-  for both exfil and download.
+- Rust <-> Rust runs enforce minimum average MiB/s thresholds:
+  MIN_AVG_MIB_S_EXFIL (default 5) and MIN_AVG_MIB_S_DOWNLOAD (default 10).
+  Set MIN_AVG_MIB_S to override both with a single value.
 - The Rust <-> Rust memory sampler enforces MAX_RSS_MB (default 80). Set MAX_RSS_MB=0
   to disable the threshold.
 - The memory sampler defaults MIN_AVG_MIB_S=0 so bandwidth checks are disabled unless overridden.

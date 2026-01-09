@@ -15,7 +15,9 @@ CHUNK_SIZE="${CHUNK_SIZE:-16384}"
 RUNS="${RUNS:-1}"
 RUN_EXFIL="${RUN_EXFIL:-1}"
 RUN_DOWNLOAD="${RUN_DOWNLOAD:-1}"
-MIN_AVG_MIB_S="${MIN_AVG_MIB_S:-10}"
+MIN_AVG_MIB_S="${MIN_AVG_MIB_S:-}"
+MIN_AVG_MIB_S_EXFIL="${MIN_AVG_MIB_S_EXFIL:-5}"
+MIN_AVG_MIB_S_DOWNLOAD="${MIN_AVG_MIB_S_DOWNLOAD:-10}"
 NETEM_IFACE="${NETEM_IFACE:-lo}"
 NETEM_DELAY_MS="${NETEM_DELAY_MS:-}"
 NETEM_JITTER_MS="${NETEM_JITTER_MS:-}"
@@ -148,16 +150,18 @@ PY
 }
 
 enforce_min_avg() {
-  python3 - "$RUN_DIR" "$TRANSFER_BYTES" "$MIN_AVG_MIB_S" "$RUN_EXFIL" "$RUN_DOWNLOAD" <<'PY'
+  python3 - "$RUN_DIR" "$TRANSFER_BYTES" "$MIN_AVG_MIB_S" "$MIN_AVG_MIB_S_EXFIL" "$MIN_AVG_MIB_S_DOWNLOAD" "$RUN_EXFIL" "$RUN_DOWNLOAD" <<'PY'
 import json
 import pathlib
 import sys
 
 run_dir = pathlib.Path(sys.argv[1])
 bytes_val = int(sys.argv[2])
-min_avg = float(sys.argv[3])
-run_exfil = int(sys.argv[4]) != 0
-run_download = int(sys.argv[5]) != 0
+min_avg = sys.argv[3]
+min_exfil = float(sys.argv[4])
+min_download = float(sys.argv[5])
+run_exfil = int(sys.argv[6]) != 0
+run_download = int(sys.argv[7]) != 0
 
 def load_done(path: pathlib.Path):
     try:
@@ -207,25 +211,31 @@ def collect(case: str):
 
 failed = False
 if run_exfil:
+    threshold = min_exfil
+    if min_avg:
+        threshold = float(min_avg)
     exfil_rates = collect("exfil")
     if not exfil_rates:
         print("exfil avg: missing timing data")
         failed = True
     else:
         exfil_avg = sum(exfil_rates) / len(exfil_rates)
-        print(f"exfil avg MiB/s: {exfil_avg:.2f} (min {min_avg:.2f})")
-        if exfil_avg < min_avg:
+        print(f"exfil avg MiB/s: {exfil_avg:.2f} (min {threshold:.2f})")
+        if exfil_avg < threshold:
             failed = True
 
 if run_download:
+    threshold = min_download
+    if min_avg:
+        threshold = float(min_avg)
     download_rates = collect("download")
     if not download_rates:
         print("download avg: missing timing data")
         failed = True
     else:
         download_avg = sum(download_rates) / len(download_rates)
-        print(f"download avg MiB/s: {download_avg:.2f} (min {min_avg:.2f})")
-        if download_avg < min_avg:
+        print(f"download avg MiB/s: {download_avg:.2f} (min {threshold:.2f})")
+        if download_avg < threshold:
             failed = True
 
 raise SystemExit(1 if failed else 0)

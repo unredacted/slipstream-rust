@@ -99,9 +99,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Link OpenSSL - use static linking for musl builds or when OPENSSL_STATIC is set
     let target = env::var("TARGET").unwrap_or_default();
-    let openssl_static = env::var("OPENSSL_STATIC").map(|v| v == "1").unwrap_or(false)
+    let openssl_static = env::var("OPENSSL_STATIC")
+        .map(|v| v == "1")
+        .unwrap_or(false)
         || target.contains("musl");
-    
+
     if openssl_static {
         println!("cargo:rustc-link-lib=static=ssl");
         println!("cargo:rustc-link-lib=static=crypto");

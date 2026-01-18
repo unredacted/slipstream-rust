@@ -29,6 +29,8 @@ struct Args {
     key: String,
     #[arg(long = "domain", short = 'd', value_parser = parse_domain, required = true)]
     domains: Vec<String>,
+    #[arg(long = "max-connections", short = 'm', default_value_t = 256)]
+    max_connections: u32,
     #[arg(long = "debug-streams")]
     debug_streams: bool,
     #[arg(long = "debug-commands")]
@@ -45,6 +47,7 @@ fn main() {
         cert: args.cert,
         key: args.key,
         domains: args.domains,
+        max_connections: args.max_connections,
         debug_streams: args.debug_streams,
         debug_commands: args.debug_commands,
     };

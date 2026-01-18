@@ -154,7 +154,7 @@ pub async fn run_server(config: &ServerConfig) -> Result<i32, ServerError> {
     let current_time = unsafe { picoquic_current_time() };
     let quic = unsafe {
         picoquic_create(
-            config.max_connections as i32, // configurable max concurrent connections
+            config.max_connections, // configurable max concurrent connections
             cert.as_ptr(),
             key.as_ptr(),
             std::ptr::null(),

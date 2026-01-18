@@ -10,7 +10,7 @@ pub mod multipath;
 pub mod server;
 pub mod stream;
 
-pub use client::Client;
+pub use client::{Client, ClientConnection};
 pub use config::Config;
 pub use error::Error;
 pub use server::Server;

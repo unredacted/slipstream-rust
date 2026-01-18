@@ -16,6 +16,8 @@ pub(crate) struct ResolverState {
     pub(crate) added: bool,
     pub(crate) path_id: libc::c_int,
     pub(crate) unique_path_id: Option<u64>,
+    /// tquic path ID for multipath support
+    pub(crate) path_id_tquic: Option<u64>,
     pub(crate) probe_attempts: u32,
     pub(crate) next_probe_at: u64,
     pub(crate) pending_polls: usize,
@@ -61,6 +63,7 @@ pub(crate) fn resolve_resolvers(
             added: is_primary,
             path_id: if is_primary { 0 } else { -1 },
             unique_path_id: if is_primary { Some(0) } else { None },
+            path_id_tquic: None,
             probe_attempts: 0,
             next_probe_at: 0,
             pending_polls: 0,

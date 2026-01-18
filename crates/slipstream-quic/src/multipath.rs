@@ -58,10 +58,10 @@ pub trait PathManager {
     fn probe_path(&mut self, peer_addr: SocketAddr) -> Result<PathId, crate::Error>;
 
     /// Get information about a specific path.
-    fn path_info(&self, path_id: PathId) -> Option<PathInfo>;
+    fn path_info(&mut self, path_id: PathId) -> Option<PathInfo>;
 
     /// Get all active paths.
-    fn active_paths(&self) -> Vec<PathInfo>;
+    fn active_paths(&mut self) -> Vec<PathInfo>;
 
     /// Set the mode/priority for a path.
     fn set_path_mode(&mut self, path_id: PathId, mode: PathMode) -> Result<(), crate::Error>;

@@ -1,36 +1,70 @@
-//! QUIC server implementation.
+//! QUIC server implementation using tquic.
 
 use crate::config::Config;
 use crate::error::Error;
-use crate::stream::{BiStream, RecvStream, SendStream};
+use bytes::Bytes;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::rc::Rc;
+use tquic::{Connection, Endpoint, PacketInfo, PacketSendHandler, TransportHandler};
 
 /// QUIC server for accepting connections.
 pub struct Server {
-    config: Config,
+    endpoint: Endpoint,
+    sender: Rc<PacketSender>,
     local_addr: SocketAddr,
-    // tquic endpoint will be stored here
+    state: Rc<RefCell<ServerState>>,
+}
+
+struct ServerState {
+    connections: HashMap<u64, ConnectionInfo>,
+}
+
+struct ConnectionInfo {
+    peer_addr: SocketAddr,
+    ready: bool,
+    streams: HashMap<u64, StreamState>,
+}
+
+struct StreamState {
+    readable: bool,
+    writable: bool,
 }
 
 impl Server {
     /// Create a new QUIC server bound to the given address.
-    pub async fn bind(addr: SocketAddr, config: Config) -> Result<Self, Error> {
-        // TODO: Implement with tquic
-        // 1. Create tquic server endpoint
-        // 2. Configure TLS with cert/key
-        // 3. Enable multipath
-        tracing::info!("Server binding to {}", addr);
-
+    pub fn new(addr: SocketAddr, config: Config) -> Result<Self, Error> {
         if config.cert_path.is_none() || config.key_path.is_none() {
             return Err(Error::Config(
                 "server requires cert_path and key_path".to_string(),
             ));
         }
 
+        let tquic_config = config.to_tquic_server_config()?;
+        let state = Rc::new(RefCell::new(ServerState {
+            connections: HashMap::new(),
+        }));
+
+        let handler = Box::new(ServerHandler {
+            state: state.clone(),
+        });
+        let sender = Rc::new(PacketSender::new());
+
+        let endpoint = Endpoint::new(
+            Box::new(tquic_config),
+            true, // is_server = true
+            handler,
+            sender.clone(),
+        );
+
+        tracing::info!("Server created for {}", addr);
+
         Ok(Self {
-            config,
+            endpoint,
+            sender,
             local_addr: addr,
+            state,
         })
     }
 
@@ -39,73 +73,210 @@ impl Server {
         self.local_addr
     }
 
-    /// Accept an incoming connection.
-    pub async fn accept(&mut self) -> Result<Option<ServerConnection>, Error> {
-        // TODO: Implement with tquic
-        Ok(None)
-    }
-
-    /// Process incoming packets (for manual polling).
-    pub fn process_incoming(&mut self, packet: &[u8], from: SocketAddr) -> Result<(), Error> {
-        // TODO: Implement with tquic
+    /// Process incoming packet data.
+    pub fn recv(&mut self, data: &[u8], from: SocketAddr) -> Result<(), Error> {
+        let info = PacketInfo {
+            src: from,
+            dst: self.local_addr,
+            time: std::time::Instant::now(),
+        };
+        let mut buf = data.to_vec();
+        self.endpoint
+            .recv(&mut buf, &info)
+            .map_err(|e| Error::Quic(e.to_string()))?;
+        let _ = self.endpoint.process_connections();
         Ok(())
     }
 
-    /// Get the next packet to send (for custom transport).
-    pub fn poll_send(&mut self) -> Option<(Vec<u8>, SocketAddr)> {
-        // TODO: Implement with tquic
-        None
-    }
-}
-
-/// A server-side QUIC connection.
-pub struct ServerConnection {
-    connection_id: u64,
-    peer_addr: SocketAddr,
-}
-
-impl ServerConnection {
-    /// Get the peer's address.
-    pub fn peer_addr(&self) -> SocketAddr {
-        self.peer_addr
+    /// Get packets to send.
+    pub fn poll_send(&mut self) -> Vec<(Vec<u8>, SocketAddr)> {
+        let _ = self.endpoint.process_connections();
+        self.sender
+            .take_packets()
+            .into_iter()
+            .map(|(data, info)| (data, info.dst))
+            .collect()
     }
 
-    /// Accept an incoming bidirectional stream.
-    pub async fn accept_bi(&mut self) -> Result<Option<BiStream>, Error> {
-        // TODO: Implement with tquic
-        Ok(None)
+    /// Get the next timeout.
+    pub fn timeout(&self) -> Option<std::time::Duration> {
+        self.endpoint.timeout()
     }
 
-    /// Accept an incoming unidirectional receive stream.
-    pub async fn accept_uni(&mut self) -> Result<Option<RecvStream>, Error> {
-        // TODO: Implement with tquic
-        Ok(None)
+    /// Handle timeout.
+    pub fn on_timeout(&mut self) {
+        self.endpoint.on_timeout(std::time::Instant::now());
+        let _ = self.endpoint.process_connections();
     }
 
-    /// Open a new bidirectional stream.
-    pub async fn open_bi(&mut self) -> Result<BiStream, Error> {
-        // TODO: Implement with tquic
-        let stream_id = 0;
-        Ok(BiStream::new(stream_id))
+    /// Get ready connections.
+    pub fn ready_connections(&self) -> Vec<u64> {
+        self.state
+            .borrow()
+            .connections
+            .iter()
+            .filter(|(_, info)| info.ready)
+            .map(|(id, _)| *id)
+            .collect()
     }
 
-    /// Open a new unidirectional send stream.
-    pub async fn open_uni(&mut self) -> Result<SendStream, Error> {
-        // TODO: Implement with tquic
-        let stream_id = 0;
-        Ok(SendStream::new(stream_id))
+    /// Read data from a stream on a connection.
+    pub fn stream_read(
+        &mut self,
+        conn_id: u64,
+        stream_id: u64,
+        buf: &mut [u8],
+    ) -> Result<(usize, bool), Error> {
+        if let Some(conn) = self.endpoint.conn_get_mut(conn_id) {
+            conn.stream_read(stream_id, buf)
+                .map_err(|e| Error::Stream(e.to_string()))
+        } else {
+            Err(Error::ConnectionClosed {
+                reason: "connection not found".to_string(),
+            })
+        }
     }
 
-    /// Close the connection.
-    pub async fn close(&mut self, error_code: u64, reason: &str) -> Result<(), Error> {
-        tracing::info!("Closing server connection: {} (code {})", reason, error_code);
-        // TODO: Implement with tquic
+    /// Write data to a stream on a connection.
+    pub fn stream_write(
+        &mut self,
+        conn_id: u64,
+        stream_id: u64,
+        data: &[u8],
+        fin: bool,
+    ) -> Result<usize, Error> {
+        if let Some(conn) = self.endpoint.conn_get_mut(conn_id) {
+            conn.stream_write(stream_id, Bytes::copy_from_slice(data), fin)
+                .map_err(|e| Error::Stream(e.to_string()))
+        } else {
+            Err(Error::ConnectionClosed {
+                reason: "connection not found".to_string(),
+            })
+        }
+    }
+
+    /// Close a connection.
+    pub fn close_connection(
+        &mut self,
+        conn_id: u64,
+        error_code: u64,
+        reason: &str,
+    ) -> Result<(), Error> {
+        if let Some(conn) = self.endpoint.conn_get_mut(conn_id) {
+            conn.close(true, error_code, reason.as_bytes())
+                .map_err(|e| Error::Quic(e.to_string()))?;
+        }
+        self.state.borrow_mut().connections.remove(&conn_id);
         Ok(())
     }
+}
 
-    /// Check if the connection is still open.
-    pub fn is_alive(&self) -> bool {
-        // TODO: Implement with tquic
-        true
+/// Handler for server-side tquic transport events.
+struct ServerHandler {
+    state: Rc<RefCell<ServerState>>,
+}
+
+impl TransportHandler for ServerHandler {
+    fn on_conn_created(&mut self, conn: &mut Connection) {
+        let conn_id = conn.trace_id();
+        tracing::debug!("Server connection created: {}", conn_id);
+    }
+
+    fn on_conn_established(&mut self, conn: &mut Connection) {
+        let conn_id = conn.index().unwrap_or(0);
+        tracing::info!("Server connection established: {}", conn_id);
+        
+        let peer = conn.paths_iter().next().map(|p| p.remote);
+        self.state.borrow_mut().connections.insert(
+            conn_id,
+            ConnectionInfo {
+                peer_addr: peer.unwrap_or_else(|| "0.0.0.0:0".parse().unwrap()),
+                ready: true,
+                streams: HashMap::new(),
+            },
+        );
+    }
+
+    fn on_conn_closed(&mut self, conn: &mut Connection) {
+        let conn_id = conn.index().unwrap_or(0);
+        tracing::info!("Server connection closed: {}", conn_id);
+        self.state.borrow_mut().connections.remove(&conn_id);
+    }
+
+    fn on_stream_created(&mut self, conn: &mut Connection, stream_id: u64) {
+        let conn_id = conn.index().unwrap_or(0);
+        tracing::debug!("Server stream {} created on conn {}", stream_id, conn_id);
+        
+        if let Some(conn_info) = self.state.borrow_mut().connections.get_mut(&conn_id) {
+            conn_info.streams.insert(
+                stream_id,
+                StreamState {
+                    readable: false,
+                    writable: true,
+                },
+            );
+        }
+    }
+
+    fn on_stream_readable(&mut self, conn: &mut Connection, stream_id: u64) {
+        let conn_id = conn.index().unwrap_or(0);
+        tracing::trace!("Server stream {} readable on conn {}", stream_id, conn_id);
+        
+        if let Some(conn_info) = self.state.borrow_mut().connections.get_mut(&conn_id) {
+            if let Some(stream) = conn_info.streams.get_mut(&stream_id) {
+                stream.readable = true;
+            }
+        }
+    }
+
+    fn on_stream_writable(&mut self, conn: &mut Connection, stream_id: u64) {
+        let conn_id = conn.index().unwrap_or(0);
+        tracing::trace!("Server stream {} writable on conn {}", stream_id, conn_id);
+        
+        if let Some(conn_info) = self.state.borrow_mut().connections.get_mut(&conn_id) {
+            if let Some(stream) = conn_info.streams.get_mut(&stream_id) {
+                stream.writable = true;
+            }
+        }
+    }
+
+    fn on_stream_closed(&mut self, conn: &mut Connection, stream_id: u64) {
+        let conn_id = conn.index().unwrap_or(0);
+        tracing::debug!("Server stream {} closed on conn {}", stream_id, conn_id);
+        
+        if let Some(conn_info) = self.state.borrow_mut().connections.get_mut(&conn_id) {
+            conn_info.streams.remove(&stream_id);
+        }
+    }
+
+    fn on_new_token(&mut self, _conn: &mut Connection, _token: Vec<u8>) {
+        // Token management for 0-RTT
+    }
+}
+
+/// Packet sender for tquic.
+struct PacketSender {
+    pending_packets: RefCell<Vec<(Vec<u8>, PacketInfo)>>,
+}
+
+impl PacketSender {
+    fn new() -> Self {
+        Self {
+            pending_packets: RefCell::new(Vec::new()),
+        }
+    }
+
+    fn take_packets(&self) -> Vec<(Vec<u8>, PacketInfo)> {
+        std::mem::take(&mut *self.pending_packets.borrow_mut())
+    }
+}
+
+impl PacketSendHandler for PacketSender {
+    fn on_packets_send(&self, pkts: &[(Vec<u8>, PacketInfo)]) -> tquic::Result<usize> {
+        let mut pending = self.pending_packets.borrow_mut();
+        for (data, info) in pkts {
+            pending.push((data.clone(), info.clone()));
+        }
+        Ok(pkts.len())
     }
 }

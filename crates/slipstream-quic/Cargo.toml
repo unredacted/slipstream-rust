@@ -11,6 +11,7 @@ readme = "../../README.md"
 default = []
 
 [dependencies]
+bytes = "1.6"
 tquic = "1.6"
 tokio = { version = "1.37", features = ["io-util", "net", "sync", "time"] }
 tracing = { workspace = true }

@@ -429,6 +429,7 @@ name = "slipstream-ffi"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "openssl-sys",
  "slipstream-core",
 ]
 

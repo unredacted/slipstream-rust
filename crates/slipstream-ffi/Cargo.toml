@@ -7,6 +7,13 @@ license = "Apache-2.0"
 repository = "https://github.com/Mygod/slipstream-rust"
 readme = "../../README.md"
 
+[features]
+default = []
+vendored-openssl = ["openssl-sys/vendored"]
+
 [dependencies]
 libc = "0.2"
 slipstream-core = { path = "../slipstream-core" }
+
+[build-dependencies]
+openssl-sys = "0.9"

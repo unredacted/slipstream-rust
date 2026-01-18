@@ -97,20 +97,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("cargo:rustc-link-lib=static={}", lib);
     }
 
-    // Link OpenSSL - use static linking for musl builds or when OPENSSL_STATIC is set
-    let target = env::var("TARGET").unwrap_or_default();
-    let openssl_static = env::var("OPENSSL_STATIC")
-        .map(|v| v == "1")
-        .unwrap_or(false)
-        || target.contains("musl");
-
-    if openssl_static {
-        println!("cargo:rustc-link-lib=static=ssl");
-        println!("cargo:rustc-link-lib=static=crypto");
-    } else {
-        println!("cargo:rustc-link-lib=dylib=ssl");
-        println!("cargo:rustc-link-lib=dylib=crypto");
-    }
+    // OpenSSL linking is handled by openssl-sys build dependency.
+    // It automatically provides the correct library paths and handles
+    // static/dynamic linking based on OPENSSL_STATIC and vendored features.
     println!("cargo:rustc-link-lib=pthread");
 
     Ok(())

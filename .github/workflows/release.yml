@@ -23,15 +23,29 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Standard glibc builds
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact_name: slipstream-linux-x86_64
+            musl: false
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             artifact_name: slipstream-linux-aarch64
+            musl: false
+          # Static musl builds (Termux/Android compatible)
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact_name: slipstream-linux-x86_64-musl
+            musl: true
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            artifact_name: slipstream-linux-aarch64-musl
+            musl: true
+          # macOS
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact_name: slipstream-macos-aarch64
+            musl: false
 
     steps:
       - name: Check out repository
@@ -39,11 +53,17 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
+      - name: Install dependencies (Linux glibc)
+        if: runner.os == 'Linux' && !matrix.musl
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake pkg-config libssl-dev
+
+      - name: Install dependencies (Linux musl)
+        if: runner.os == 'Linux' && matrix.musl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake pkg-config musl-tools musl-dev libssl-dev
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
@@ -58,10 +78,15 @@ jobs:
       - name: Build picoquic
         env:
           CMAKE_POLICY_VERSION_MINIMUM: "3.5"
-        run: ./scripts/build_picoquic.sh
+        run: |
+          if [ "${{ matrix.musl }}" = "true" ]; then
+            # Use musl compiler for musl targets
+            export CC=musl-gcc
+          fi
+          ./scripts/build_picoquic.sh
 
       - name: Create picotls-fusion stub (ARM builds)
-        if: contains(matrix.os, 'arm') || matrix.os == 'macos-14' || matrix.os == 'macos-latest' || matrix.target == 'aarch64-apple-darwin' || matrix.target == 'aarch64-unknown-linux-gnu'
+        if: contains(matrix.os, 'arm') || matrix.os == 'macos-14' || matrix.os == 'macos-latest' || contains(matrix.target, 'aarch64')
         run: |
           if [ ! -f .picoquic-build/_deps/picotls-build/libpicotls-fusion.a ]; then
             echo "" > /tmp/empty.c
@@ -81,10 +106,26 @@ jobs:
             echo "LIBRARY_PATH=/usr/local/opt/openssl@3/lib" >> $GITHUB_ENV
           fi
 
+      - name: Configure static linking (musl)
+        if: matrix.musl
+        run: |
+          echo "OPENSSL_STATIC=1" >> $GITHUB_ENV
+          echo "RUSTFLAGS=-C target-feature=+crt-static" >> $GITHUB_ENV
+          echo "CC=musl-gcc" >> $GITHUB_ENV
+
       - name: Build release binaries
         env:
           CMAKE_POLICY_VERSION_MINIMUM: "3.5"
-        run: cargo build --release --target ${{ matrix.target }}
+        run: |
+          if [ "${{ matrix.musl }}" = "true" ]; then
+            # Build with vendored OpenSSL for fully static musl binaries
+            cargo build --release --target ${{ matrix.target }} \
+              -p slipstream-client --features vendored-openssl
+            cargo build --release --target ${{ matrix.target }} \
+              -p slipstream-server
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
 
       - name: Determine version
         id: version

@@ -9,6 +9,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-env-changed=PICOQUIC_LIB_DIR");
     println!("cargo:rerun-if-env-changed=PICOQUIC_AUTO_BUILD");
     println!("cargo:rerun-if-env-changed=PICOTLS_INCLUDE_DIR");
+    println!("cargo:rerun-if-env-changed=OPENSSL_STATIC");
+    println!("cargo:rerun-if-env-changed=CC");
 
     let explicit_paths = has_explicit_picoquic_paths();
     let auto_build = env_flag("PICOQUIC_AUTO_BUILD", true);
@@ -95,9 +97,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("cargo:rustc-link-lib=static={}", lib);
     }
 
-    println!("cargo:rustc-link-lib=dylib=ssl");
-    println!("cargo:rustc-link-lib=dylib=crypto");
-    println!("cargo:rustc-link-lib=dylib=pthread");
+    // Link OpenSSL - use static linking for musl builds or when OPENSSL_STATIC is set
+    let target = env::var("TARGET").unwrap_or_default();
+    let openssl_static = env::var("OPENSSL_STATIC").map(|v| v == "1").unwrap_or(false)
+        || target.contains("musl");
+    
+    if openssl_static {
+        println!("cargo:rustc-link-lib=static=ssl");
+        println!("cargo:rustc-link-lib=static=crypto");
+    } else {
+        println!("cargo:rustc-link-lib=dylib=ssl");
+        println!("cargo:rustc-link-lib=dylib=crypto");
+    }
+    println!("cargo:rustc-link-lib=pthread");
 
     Ok(())
 }
@@ -394,7 +406,9 @@ fn compile_cc(
     output: &Path,
     picoquic_include_dir: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let status = Command::new("cc")
+    // Respect CC environment variable for musl-gcc compatibility
+    let cc = env::var("CC").unwrap_or_else(|_| "cc".to_string());
+    let status = Command::new(&cc)
         .arg("-c")
         .arg("-fPIC")
         .arg(source)
@@ -404,7 +418,7 @@ fn compile_cc(
         .arg(picoquic_include_dir)
         .status()?;
     if !status.success() {
-        return Err(format!("Failed to compile {}.", source.display()).into());
+        return Err(format!("Failed to compile {} with {}.", source.display(), cc).into());
     }
     Ok(())
 }
@@ -414,7 +428,9 @@ fn compile_cc_with_includes(
     output: &Path,
     include_dirs: &[&Path],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut command = Command::new("cc");
+    // Respect CC environment variable for musl-gcc compatibility
+    let cc = env::var("CC").unwrap_or_else(|_| "cc".to_string());
+    let mut command = Command::new(&cc);
     command
         .arg("-c")
         .arg("-fPIC")
@@ -426,7 +442,7 @@ fn compile_cc_with_includes(
     }
     let status = command.status()?;
     if !status.success() {
-        return Err(format!("Failed to compile {}.", source.display()).into());
+        return Err(format!("Failed to compile {} with {}.", source.display(), cc).into());
     }
     Ok(())
 }

@@ -10,6 +10,21 @@ This repository hosts the Rust rewrite of the [original C implementation](https:
 - picoquic FFI integration for multipath QUIC support.
 - Fully async with tokio.
 
+## Platform Compatibility
+
+Pre-built binaries are available for the following platforms:
+
+| Artifact | Platform | Notes |
+|----------|----------|-------|
+| `slipstream-linux-x86_64` | Linux x86_64 (glibc) | Standard Linux distributions |
+| `slipstream-linux-aarch64` | Linux ARM64 (glibc) | ARM64 servers, Raspberry Pi OS |
+| `slipstream-linux-x86_64-musl` | Linux x86_64 (static) | Alpine Linux, containers |
+| `slipstream-linux-aarch64-musl` | Linux ARM64 (static) | **Android Termux**, Alpine ARM |
+| `slipstream-macos-aarch64` | macOS ARM64 | Apple Silicon Macs |
+
+> **Android/Termux users**: Use the `-musl` variants. These are fully statically linked
+> and work on any Linux environment, including Termux which uses Bionic libc instead of glibc.
+
 ## Quick start (local dev)
 
 Prereqs:

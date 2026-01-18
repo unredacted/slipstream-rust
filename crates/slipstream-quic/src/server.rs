@@ -185,7 +185,7 @@ impl TransportHandler for ServerHandler {
     fn on_conn_established(&mut self, conn: &mut Connection) {
         let conn_id = conn.index().unwrap_or(0);
         tracing::info!("Server connection established: {}", conn_id);
-        
+
         let peer = conn.paths_iter().next().map(|p| p.remote);
         self.state.borrow_mut().connections.insert(
             conn_id,
@@ -206,7 +206,7 @@ impl TransportHandler for ServerHandler {
     fn on_stream_created(&mut self, conn: &mut Connection, stream_id: u64) {
         let conn_id = conn.index().unwrap_or(0);
         tracing::debug!("Server stream {} created on conn {}", stream_id, conn_id);
-        
+
         if let Some(conn_info) = self.state.borrow_mut().connections.get_mut(&conn_id) {
             conn_info.streams.insert(
                 stream_id,
@@ -221,7 +221,7 @@ impl TransportHandler for ServerHandler {
     fn on_stream_readable(&mut self, conn: &mut Connection, stream_id: u64) {
         let conn_id = conn.index().unwrap_or(0);
         tracing::trace!("Server stream {} readable on conn {}", stream_id, conn_id);
-        
+
         if let Some(conn_info) = self.state.borrow_mut().connections.get_mut(&conn_id) {
             if let Some(stream) = conn_info.streams.get_mut(&stream_id) {
                 stream.readable = true;
@@ -232,7 +232,7 @@ impl TransportHandler for ServerHandler {
     fn on_stream_writable(&mut self, conn: &mut Connection, stream_id: u64) {
         let conn_id = conn.index().unwrap_or(0);
         tracing::trace!("Server stream {} writable on conn {}", stream_id, conn_id);
-        
+
         if let Some(conn_info) = self.state.borrow_mut().connections.get_mut(&conn_id) {
             if let Some(stream) = conn_info.streams.get_mut(&stream_id) {
                 stream.writable = true;
@@ -243,7 +243,7 @@ impl TransportHandler for ServerHandler {
     fn on_stream_closed(&mut self, conn: &mut Connection, stream_id: u64) {
         let conn_id = conn.index().unwrap_or(0);
         tracing::debug!("Server stream {} closed on conn {}", stream_id, conn_id);
-        
+
         if let Some(conn_info) = self.state.borrow_mut().connections.get_mut(&conn_id) {
             conn_info.streams.remove(&stream_id);
         }

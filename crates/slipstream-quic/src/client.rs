@@ -3,12 +3,12 @@
 use crate::config::Config;
 use crate::error::Error;
 use crate::multipath::{PathEvent, PathId, PathInfo, PathManager, PathMode};
+use bytes::Bytes;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use tquic::{Connection, Endpoint, PacketInfo, PacketSendHandler, TransportHandler};
-use bytes::Bytes;
 
 /// QUIC client for connecting to a server.
 pub struct Client {
@@ -29,16 +29,16 @@ impl Client {
         server_name: &str,
     ) -> Result<ClientConnection, Error> {
         let tquic_config = self.config.to_tquic_client_config()?;
-        
+
         // Create the connection state
         let state = Rc::new(RefCell::new(ConnectionState::new()));
-        
+
         // Create handler and sender
         let handler = Box::new(ClientHandler {
             state: state.clone(),
         });
         let sender = Rc::new(PacketSender::new());
-        
+
         // Create tquic endpoint
         let mut endpoint = Endpoint::new(
             Box::new(tquic_config),
@@ -46,14 +46,19 @@ impl Client {
             handler,
             sender.clone(),
         );
-        
+
         // Initiate connection (6 args: local, remote, server_name, session, token, config)
         let conn_id = endpoint
             .connect(local_addr, server_addr, Some(server_name), None, None, None)
             .map_err(|e| Error::Quic(e.to_string()))?;
-        
-        tracing::info!("Connecting to {} ({}), conn_id={}", server_name, server_addr, conn_id);
-        
+
+        tracing::info!(
+            "Connecting to {} ({}), conn_id={}",
+            server_name,
+            server_addr,
+            conn_id
+        );
+
         Ok(ClientConnection {
             endpoint,
             conn_id,

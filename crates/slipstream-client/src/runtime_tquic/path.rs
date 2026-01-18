@@ -21,11 +21,11 @@ pub(crate) fn apply_path_mode_tquic(
     if !refresh_resolver_path_tquic(conn, resolver) {
         return Ok(());
     }
-    
+
     // tquic doesn't have per-path mode settings like picoquic
     // The multipath scheduling algorithm handles this at the config level
     // For now, we track the mode but don't apply specific per-path settings
-    
+
     resolver.added = true;
     Ok(())
 }
@@ -60,7 +60,7 @@ pub(crate) fn fetch_path_quality_tquic(
             };
         }
     }
-    
+
     // Fallback to connection-level stats
     PathQuality {
         rtt: conn.rtt(),
@@ -88,7 +88,7 @@ pub(crate) fn drain_path_events_tquic(
     if events.is_empty() {
         return;
     }
-    
+
     for event in events {
         match event {
             slipstream_quic::multipath::PathEvent::Available(path_id) => {

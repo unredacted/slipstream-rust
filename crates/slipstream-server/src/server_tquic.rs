@@ -122,7 +122,9 @@ pub async fn run_server_tquic(config: &TquicServerConfig) -> Result<i32, TquicSe
     warn_overlapping_domains(&config.domains);
     let domains: Vec<&str> = config.domains.iter().map(String::as_str).collect();
     if domains.is_empty() {
-        return Err(TquicServerError::new("At least one domain must be configured"));
+        return Err(TquicServerError::new(
+            "At least one domain must be configured",
+        ));
     }
 
     // Set up signal handler
@@ -141,7 +143,9 @@ pub async fn run_server_tquic(config: &TquicServerConfig) -> Result<i32, TquicSe
         }
 
         let mut slots = Vec::new();
-        let timeout = server.timeout().unwrap_or(Duration::from_millis(IDLE_SLEEP_MS));
+        let timeout = server
+            .timeout()
+            .unwrap_or(Duration::from_millis(IDLE_SLEEP_MS));
 
         tokio::select! {
             // Handle commands
@@ -150,7 +154,7 @@ pub async fn run_server_tquic(config: &TquicServerConfig) -> Result<i32, TquicSe
                     // TODO: Handle server commands
                 }
             }
-            
+
             // Handle incoming UDP packets (DNS queries)
             recv = udp.recv_from(&mut recv_buf) => {
                 match recv {
@@ -163,7 +167,7 @@ pub async fn run_server_tquic(config: &TquicServerConfig) -> Result<i32, TquicSe
                         )? {
                             slots.push(slot);
                         }
-                        
+
                         // Try to receive more packets in burst
                         for _ in 1..64 {
                             match udp.try_recv_from(&mut recv_buf) {
@@ -188,7 +192,7 @@ pub async fn run_server_tquic(config: &TquicServerConfig) -> Result<i32, TquicSe
                     Err(e) => return Err(map_io(e)),
                 }
             }
-            
+
             // Handle timeout
             _ = sleep(timeout) => {
                 server.on_timeout();
@@ -198,15 +202,18 @@ pub async fn run_server_tquic(config: &TquicServerConfig) -> Result<i32, TquicSe
         // Process ready connections
         for conn_id in server.ready_connections() {
             let mut read_buf = vec![0u8; STREAM_READ_CHUNK_BYTES];
-            
+
             // Try to read from streams
             for stream_id in 0..100u64 {
                 match server.stream_read(conn_id, stream_id, &mut read_buf) {
                     Ok((n, fin)) if n > 0 => {
                         if debug_streams {
-                            debug!("conn {} stream {}: read {} bytes, fin={}", conn_id, stream_id, n, fin);
+                            debug!(
+                                "conn {} stream {}: read {} bytes, fin={}",
+                                conn_id, stream_id, n, fin
+                            );
                         }
-                        
+
                         // Forward to target
                         // TODO: Implement TCP forwarding to target_addr
                     }
@@ -224,7 +231,7 @@ pub async fn run_server_tquic(config: &TquicServerConfig) -> Result<i32, TquicSe
         for slot in slots.iter_mut() {
             // Get QUIC packet to send
             let mut quic_payload = None;
-            
+
             if slot.rcode.is_none() {
                 // Poll for outgoing packet
                 let packets = server.poll_send();
@@ -248,7 +255,7 @@ pub async fn run_server_tquic(config: &TquicServerConfig) -> Result<i32, TquicSe
             } else {
                 (None, slot.rcode)
             };
-            
+
             let response = encode_response(&ResponseParams {
                 id: slot.id,
                 rd: slot.rd,
@@ -258,7 +265,7 @@ pub async fn run_server_tquic(config: &TquicServerConfig) -> Result<i32, TquicSe
                 rcode,
             })
             .map_err(|e| TquicServerError::new(e.to_string()))?;
-            
+
             let peer = normalize_dual_stack_addr(slot.peer);
             udp.send_to(&response, peer).await.map_err(map_io)?;
         }
@@ -290,7 +297,7 @@ fn decode_slot_tquic(
             if let Err(e) = server.recv(&query.payload, peer) {
                 debug!("Failed to process QUIC packet: {}", e);
             }
-            
+
             Ok(Some(Slot {
                 peer: normalize_dual_stack_addr(peer),
                 id: query.id,

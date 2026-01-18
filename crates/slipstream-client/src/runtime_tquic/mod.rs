@@ -116,7 +116,7 @@ pub async fn run_client_tquic(config: &TquicClientConfig<'_>) -> Result<i32, Cli
         .map_err(|e| ClientError::new(format!("Failed to connect: {}", e)))?;
 
     info!("Connecting to {}", server_addr);
-    
+
     // Mark first resolver as connected
     resolvers[0].added = true;
     resolvers[0].path_id_tquic = Some(0);
@@ -137,7 +137,7 @@ pub async fn run_client_tquic(config: &TquicClientConfig<'_>) -> Result<i32, Cli
         if conn.is_ready() && !ready {
             ready = true;
             info!("Connection ready");
-            
+
             // Add additional paths for multipath
             for resolver in resolvers.iter_mut().skip(1) {
                 if !resolver.added {
@@ -183,7 +183,7 @@ pub async fn run_client_tquic(config: &TquicClientConfig<'_>) -> Result<i32, Cli
             .unwrap_or(DNS_WAKE_DELAY_MAX_US);
         let streams_len = streams.len();
         let mut has_work = streams_len > 0;
-        
+
         for resolver in resolvers.iter_mut() {
             if !resolver.added {
                 continue;
@@ -200,7 +200,8 @@ pub async fn run_client_tquic(config: &TquicClientConfig<'_>) -> Result<i32, Cli
             if pending_for_sleep > 0 {
                 has_work = true;
             }
-            if resolver.mode == ResolverMode::Authoritative && !resolver.inflight_poll_ids.is_empty()
+            if resolver.mode == ResolverMode::Authoritative
+                && !resolver.inflight_poll_ids.is_empty()
             {
                 has_work = true;
             }
@@ -234,7 +235,7 @@ pub async fn run_client_tquic(config: &TquicClientConfig<'_>) -> Result<i32, Cli
                         if let Err(e) = conn.recv(&recv_buf[..size], from) {
                             debug!("Failed to process packet from {}: {}", from, e);
                         }
-                        
+
                         // Try to receive more packets in burst
                         for _ in 1..packet_loop_recv_max {
                             match udp.try_recv_from(&mut recv_buf) {
@@ -264,7 +265,14 @@ pub async fn run_client_tquic(config: &TquicClientConfig<'_>) -> Result<i32, Cli
 
         // Drain pending commands
         while let Ok(command) = command_rx.try_recv() {
-            handle_command_tquic(&mut conn, &mut streams, command, &command_tx, &data_notify, debug_streams)?;
+            handle_command_tquic(
+                &mut conn,
+                &mut streams,
+                command,
+                &command_tx,
+                &data_notify,
+                debug_streams,
+            )?;
         }
 
         // Poll for outgoing packets
@@ -272,14 +280,16 @@ pub async fn run_client_tquic(config: &TquicClientConfig<'_>) -> Result<i32, Cli
         if packets.is_empty() {
             zero_send_loops = zero_send_loops.saturating_add(1);
         }
-        
+
         for (packet_data, dest) in packets.into_iter().take(packet_loop_send_max) {
             // Update resolver stats
             let dest = normalize_dual_stack_addr(dest);
             if let Some(resolver) = find_resolver_by_addr_mut(&mut resolvers, dest) {
                 resolver.debug.send_packets = resolver.debug.send_packets.saturating_add(1);
-                resolver.debug.send_bytes =
-                    resolver.debug.send_bytes.saturating_add(packet_data.len() as u64);
+                resolver.debug.send_bytes = resolver
+                    .debug
+                    .send_bytes
+                    .saturating_add(packet_data.len() as u64);
             }
 
             // Encode QUIC packet as DNS query
@@ -296,7 +306,7 @@ pub async fn run_client_tquic(config: &TquicClientConfig<'_>) -> Result<i32, Cli
                 is_query: true,
             };
             dns_id = dns_id.wrapping_add(1);
-            
+
             let dns_packet = encode_query(&params)
                 .map_err(|e| ClientError::new(format!("Failed to encode DNS query: {}", e)))?;
 
@@ -308,7 +318,7 @@ pub async fn run_client_tquic(config: &TquicClientConfig<'_>) -> Result<i32, Cli
 
         // Path event handling and polling (for authoritative mode)
         drain_path_events_tquic(&mut conn, &mut resolvers);
-        
+
         for resolver in resolvers.iter_mut() {
             if !resolver.added {
                 continue;

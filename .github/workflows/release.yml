@@ -23,29 +23,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Standard glibc builds
+          # Linux builds (glibc)
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact_name: slipstream-linux-x86_64
-            musl: false
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             artifact_name: slipstream-linux-aarch64
-            musl: false
-          # Static musl builds (Termux/Android compatible)
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            artifact_name: slipstream-linux-x86_64-musl
-            musl: true
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-musl
-            artifact_name: slipstream-linux-aarch64-musl
-            musl: true
           # macOS
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact_name: slipstream-macos-aarch64
-            musl: false
 
     steps:
       - name: Check out repository
@@ -53,17 +41,11 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install dependencies (Linux glibc)
-        if: runner.os == 'Linux' && !matrix.musl
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake pkg-config libssl-dev
-
-      - name: Install dependencies (Linux musl)
-        if: runner.os == 'Linux' && matrix.musl
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake pkg-config musl-tools musl-dev libssl-dev
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
@@ -101,25 +83,10 @@ jobs:
             echo "LIBRARY_PATH=/usr/local/opt/openssl@3/lib" >> $GITHUB_ENV
           fi
 
-      - name: Configure static linking (musl)
-        if: matrix.musl
-        run: |
-          echo "OPENSSL_STATIC=1" >> $GITHUB_ENV
-          echo "RUSTFLAGS=-C target-feature=+crt-static" >> $GITHUB_ENV
-
       - name: Build release binaries
         env:
           CMAKE_POLICY_VERSION_MINIMUM: "3.5"
-        run: |
-          if [ "${{ matrix.musl }}" = "true" ]; then
-            # Build with vendored OpenSSL for fully static musl binaries
-            cargo build --release --target ${{ matrix.target }} \
-              -p slipstream-client --features vendored-openssl
-            cargo build --release --target ${{ matrix.target }} \
-              -p slipstream-server
-          else
-            cargo build --release --target ${{ matrix.target }}
-          fi
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Determine version
         id: version

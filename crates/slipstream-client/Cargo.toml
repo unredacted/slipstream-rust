@@ -7,10 +7,6 @@ license = "Apache-2.0"
 repository = "https://github.com/Mygod/slipstream-rust"
 readme = "../../README.md"
 
-[features]
-default = []
-vendored-openssl = ["openssl/vendored", "slipstream-ffi/vendored-openssl"]
-
 [dependencies]
 clap = { workspace = true }
 libc = "0.2"

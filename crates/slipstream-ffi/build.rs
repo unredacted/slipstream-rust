@@ -97,9 +97,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("cargo:rustc-link-lib=static={}", lib);
     }
 
-    // OpenSSL linking is handled by openssl-sys build dependency.
-    // It automatically provides the correct library paths and handles
-    // static/dynamic linking based on OPENSSL_STATIC and vendored features.
+    // Link OpenSSL - picoquic/picotls need ssl and crypto
+    println!("cargo:rustc-link-lib=ssl");
+    println!("cargo:rustc-link-lib=crypto");
     println!("cargo:rustc-link-lib=pthread");
 
     Ok(())

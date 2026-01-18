@@ -16,14 +16,18 @@ Pre-built binaries are available for the following platforms:
 
 | Artifact | Platform | Notes |
 |----------|----------|-------|
-| `slipstream-linux-x86_64` | Linux x86_64 (glibc) | Standard Linux distributions |
-| `slipstream-linux-aarch64` | Linux ARM64 (glibc) | ARM64 servers, Raspberry Pi OS |
-| `slipstream-linux-x86_64-musl` | Linux x86_64 (static) | Alpine Linux, containers |
-| `slipstream-linux-aarch64-musl` | Linux ARM64 (static) | **Android Termux**, Alpine ARM |
+| `slipstream-linux-x86_64` | Linux x86_64 | Standard Linux distributions |
+| `slipstream-linux-aarch64` | Linux ARM64 | ARM64 servers, Raspberry Pi OS |
 | `slipstream-macos-aarch64` | macOS ARM64 | Apple Silicon Macs |
 
-> **Android/Termux users**: Use the `-musl` variants. These are fully statically linked
-> and work on any Linux environment, including Termux which uses Bionic libc instead of glibc.
+> **Android/Termux users**: The Linux binaries require glibc which Termux doesn't have. 
+> Use [proot-distro](https://github.com/termux/proot-distro) to run a full Linux environment:
+> ```bash
+> pkg install proot-distro
+> proot-distro install debian
+> proot-distro login debian
+> # Now you can run the aarch64 binary
+> ```
 
 ## Quick start (local dev)
 

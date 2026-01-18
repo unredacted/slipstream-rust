@@ -3,6 +3,7 @@ members = [
   "crates/slipstream-core",
   "crates/slipstream-dns",
   "crates/slipstream-ffi",
+  "crates/slipstream-quic",
   "crates/slipstream-client",
   "crates/slipstream-server",
 ]
@@ -20,5 +21,7 @@ clap = { version = "4.5.4", features = ["derive"] }
 openssl = "0.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+thiserror = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+

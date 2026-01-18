@@ -63,14 +63,14 @@ jobs:
           CMAKE_POLICY_VERSION_MINIMUM: "3.5"
         run: ./scripts/build_picoquic.sh
 
-      - name: Create picotls-fusion stub (ARM64)
-        if: matrix.target == 'aarch64-apple-darwin' || matrix.target == 'aarch64-unknown-linux-gnu'
+      - name: Create picotls-fusion stub (ARM builds)
+        if: contains(matrix.os, 'arm') || matrix.os == 'macos-14' || matrix.os == 'macos-latest' || matrix.target == 'aarch64-apple-darwin' || matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           if [ ! -f .picoquic-build/_deps/picotls-build/libpicotls-fusion.a ]; then
             echo "" > /tmp/empty.c
             cc -c /tmp/empty.c -o /tmp/empty.o
             ar rcs .picoquic-build/_deps/picotls-build/libpicotls-fusion.a /tmp/empty.o
-            echo "Created stub libpicotls-fusion.a for ARM64"
+            echo "Created stub libpicotls-fusion.a (fusion requires x86 AES-NI)"
           fi
 
       - name: Set OpenSSL paths (macOS)

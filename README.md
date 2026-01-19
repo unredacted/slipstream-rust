@@ -7,7 +7,10 @@ This repository hosts the Rust rewrite of the [original C implementation](https:
 
 - slipstream-client and slipstream-server CLI binaries.
 - A DNS codec crate with vector-based tests.
-- picoquic FFI integration for multipath QUIC support.
+- Pure-Rust QUIC transport using [tquic](https://github.com/tencent/tquic).
+- DNS packet fragmentation for large QUIC handshakes.
+- Certificate pinning with self-signed cert support.
+- Multipath QUIC for path diversity.
 - Fully async with tokio.
 
 ## Platform Compatibility
@@ -34,19 +37,6 @@ Pre-built binaries are available for the following platforms:
 Prereqs:
 
 - Rust toolchain (stable)
-- cmake, pkg-config
-- OpenSSL headers and libs
-- python3 (for interop and benchmark scripts)
-
-Initialize the picoquic submodule:
-
-```
-git submodule update --init --recursive
-```
-
-`cargo build` will auto-build picoquic via `./scripts/build_picoquic.sh` when
-libs are missing (outputs to `.picoquic-build/`). Set `PICOQUIC_AUTO_BUILD=0`
-to disable or see `docs/build.md` for manual control.
 
 Build the Rust binaries:
 
@@ -54,7 +44,7 @@ Build the Rust binaries:
 cargo build -p slipstream-client -p slipstream-server
 ```
 
-Generate a test TLS cert (example):
+Generate a self-signed TLS cert:
 
 ```
 openssl req -x509 -newkey rsa:2048 -nodes \
@@ -82,14 +72,36 @@ cargo run -p slipstream-client -- \
   --domain example.com
 ```
 
-Note: You can also run the client against a resolver that forwards to the server. For local testing, see the interop docs.
+### Certificate Pinning
+
+For production use, pin the server certificate on the client:
+
+```
+cargo run -p slipstream-client -- \
+  --tcp-listen-port 7000 \
+  --resolver 127.0.0.1:8853 \
+  --domain example.com \
+  --cert ./cert.pem   # Pin server's certificate
+```
+
+Self-signed certificates are supported by default. The pinned cert is used as the trusted CA.
+
+### Multipath QUIC
+
+Use multiple resolvers for path diversity:
+
+```
+cargo run -p slipstream-client -- \
+  --tcp-listen-port 7000 \
+  --resolver 1.1.1.1:53/recursive \
+  --resolver 8.8.8.8:53/recursive \
+  --domain example.com
+```
 
 ## Benchmarks (local snapshot)
 
 All results below are end-to-end completion times in seconds (lower is better),
 averaged over 5 runs on local loopback. Payload: 10 MiB in each direction.
-Variants are dnstt, C-C slipstream, Rust-Rust (non-auth), and Rust-Rust (auth
-via `--authoritative <resolver>`).
 
 See `scripts/bench` for scripts used for obtaining these results.
 
@@ -105,7 +117,7 @@ See `scripts/bench` for scripts used for obtaining these results.
 ## Documentation
 
 - docs/README.md for the doc index
-- docs/build.md for build prerequisites and picoquic setup
+- docs/build.md for build prerequisites
 - docs/usage.md for CLI usage
 - docs/protocol.md for DNS encapsulation notes
 - docs/dns-codec.md for codec behavior and vectors
@@ -114,16 +126,17 @@ See `scripts/bench` for scripts used for obtaining these results.
 - docs/benchmarks-results.md for benchmark results
 - docs/profiling.md for profiling notes
 - docs/design.md for architecture notes
+- CLAUDE.md for internal development notes
 
 ## Repo layout
 
 - crates/      Rust workspace crates
 - docs/        Public docs and internal design notes
-- fixtures/    Golden DNS vectors
+- fixtures/    Test certificates and DNS vectors
 - scripts/     Interop and benchmark harnesses
 - tools/       Vector generator and helpers
-- vendor/      picoquic submodule
 
 ## License
 
 Apache-2.0. See LICENSE.
+

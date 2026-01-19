@@ -13,3 +13,6 @@ __pycache__/
 
 # Generated DTrace probe headers (from CMake/picotls build)
 .tmp.dprobes.h
+
+# LLM
+CLAUDE.md

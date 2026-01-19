@@ -1,6 +1,7 @@
 mod base32;
 mod codec;
 mod dots;
+pub mod fragment;
 mod name;
 mod types;
 mod wire;
@@ -11,6 +12,7 @@ pub use codec::{
     is_response,
 };
 pub use dots::{dotify, undotify};
+pub use fragment::{fragment_packet, parse_fragment, FragmentBuffer, FRAGMENT_HEADER_SIZE};
 pub use types::{
     DecodeQueryError, DecodedQuery, DnsError, QueryParams, Question, Rcode, ResponseParams,
     CLASS_IN, EDNS_UDP_PAYLOAD, RR_A, RR_OPT, RR_TXT,

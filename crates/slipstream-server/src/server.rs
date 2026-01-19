@@ -4,7 +4,7 @@
 
 use slipstream_core::{resolve_host_port, HostPort};
 use slipstream_dns::{
-    decode_query_with_domains, encode_response, DecodeQueryError, Question, Rcode, ResponseParams,
+    decode_query_with_domains, encode_response, DecodeQueryError, FragmentBuffer, Question, Rcode, ResponseParams,
 };
 use slipstream_quic::{Config as QuicConfig, Server};
 use std::collections::HashMap;
@@ -133,6 +133,7 @@ pub async fn run_server(config: &TquicServerConfig) -> Result<i32, TquicServerEr
     let mut recv_buf = vec![0u8; DNS_MAX_QUERY_SIZE];
     let _send_buf = vec![0u8; MAX_PACKET_SIZE];
     let mut streams: HashMap<(u64, u64), StreamState> = HashMap::new();
+    let mut fragment_buffer = FragmentBuffer::new();
 
     loop {
         if SHOULD_SHUTDOWN.load(Ordering::Relaxed) {
@@ -162,6 +163,7 @@ pub async fn run_server(config: &TquicServerConfig) -> Result<i32, TquicServerEr
                             peer,
                             &domains,
                             &mut server,
+                            &mut fragment_buffer,
                         )? {
                             slots.push(slot);
                         }
@@ -175,6 +177,7 @@ pub async fn run_server(config: &TquicServerConfig) -> Result<i32, TquicServerEr
                                         peer,
                                         &domains,
                                         &mut server,
+                                        &mut fragment_buffer,
                                     )? {
                                         slots.push(slot);
                                     }
@@ -288,13 +291,24 @@ fn decode_slot_tquic(
     peer: SocketAddr,
     domains: &[&str],
     server: &mut Server,
+    fragment_buffer: &mut FragmentBuffer,
 ) -> Result<Option<Slot>, TquicServerError> {
     match decode_query_with_domains(packet, domains) {
         Ok(query) => {
-            // Process QUIC packet
-            if let Err(e) = server.recv(&query.payload, peer) {
-                debug!("Failed to process QUIC packet: {}", e);
+            // Try to reassemble fragment
+            if let Some(complete_packet) = fragment_buffer.receive_fragment(&query.payload) {
+                // Complete packet - feed to tquic
+                if let Err(e) = server.recv(&complete_packet, peer) {
+                    debug!("Failed to process QUIC packet: {}", e);
+                }
+            } else if query.payload.len() < 4 {
+                // Too small to be a fragment, try direct processing
+                if let Err(e) = server.recv(&query.payload, peer) {
+                    debug!("Failed to process QUIC packet (direct): {}", e);
+                }
             }
+            // Note: If it's a fragment still waiting for more pieces, we just return
+            // the slot for DNS response purposes but don't process the QUIC data yet
 
             Ok(Some(Slot {
                 peer: normalize_dual_stack_addr(peer),

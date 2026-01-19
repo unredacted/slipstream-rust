@@ -35,6 +35,15 @@ pub struct Config {
 
     /// ALPN protocols.
     pub alpn: Vec<Vec<u8>>,
+
+    /// Maximum UDP payload size for outgoing packets.
+    /// For DNS tunneling, this should be set to the MTU calculated from domain length.
+    pub send_udp_payload_size: Option<usize>,
+
+    /// Enable strict certificate chain verification.
+    /// When false (default), accepts self-signed certs without chain validation.
+    /// When true, validates the certificate chain against the pinned CA.
+    pub verify_cert_chain: bool,
 }
 
 impl Default for Config {
@@ -50,6 +59,8 @@ impl Default for Config {
             key_path: None,
             ca_path: None,
             alpn: vec![b"picoquic_sample".to_vec()],
+            send_udp_payload_size: None,
+            verify_cert_chain: false,
         }
     }
 }
@@ -91,9 +102,40 @@ impl Config {
         self
     }
 
+    /// Set the maximum UDP payload size for outgoing packets (for DNS tunneling).
+    pub fn with_send_udp_payload_size(mut self, size: usize) -> Self {
+        self.send_udp_payload_size = Some(size);
+        self
+    }
+
+    /// Enable strict certificate chain verification.
+    /// When disabled (default), accepts self-signed certs without chain validation.
+    pub fn with_verify_cert_chain(mut self, verify: bool) -> Self {
+        self.verify_cert_chain = verify;
+        self
+    }
+
     /// Convert to tquic Config for client.
     pub fn to_tquic_client_config(&self) -> Result<tquic::Config, crate::Error> {
         let mut config = tquic::Config::new().map_err(|e| crate::Error::Config(e.to_string()))?;
+
+        // Create client TLS config with ALPN protocols
+        let mut tls_config = tquic::TlsConfig::new_client_config(self.alpn.clone(), true)
+            .map_err(|e| crate::Error::Config(format!("Failed to create TLS config: {}", e)))?;
+
+        // Certificate pinning: if ca_path is set, use it as trusted CA and enable verification
+        // With self-signed certs, the cert IS the CA, so verification validates the pinned cert
+        if let Some(ca_path) = &self.ca_path {
+            tls_config.set_ca_certs(ca_path)
+                .map_err(|e| crate::Error::Config(format!("Failed to set CA cert for pinning: {}", e)))?;
+            // Enable verification when pinning is configured
+            tls_config.set_verify(true);
+        } else if self.verify_cert_chain {
+            // No pinning, but user explicitly requested chain verification
+            tls_config.set_verify(true);
+        }
+
+        config.set_tls_config(tls_config);
 
         // Enable multipath
         config.enable_multipath(self.enable_multipath);
@@ -107,14 +149,39 @@ impl Config {
         // Set initial RTT
         config.set_initial_rtt(self.initial_rtt_ms);
 
+        // Set maximum UDP payload size for DNS tunneling
+        if let Some(size) = self.send_udp_payload_size {
+            config.set_send_udp_payload_size(size);
+        }
+
         Ok(config)
     }
 
     /// Convert to tquic Config for server.
     pub fn to_tquic_server_config(&self) -> Result<tquic::Config, crate::Error> {
-        let config = self.to_tquic_client_config()?;
+        let mut config = tquic::Config::new().map_err(|e| crate::Error::Config(e.to_string()))?;
 
-        // Server-specific setup will be done when creating the endpoint
+        // Create server TLS config with certificate and key
+        if let (Some(cert), Some(key)) = (&self.cert_path, &self.key_path) {
+            let tls_config = tquic::TlsConfig::new_server_config(cert, key, self.alpn.clone(), true)
+                .map_err(|e| crate::Error::Config(format!("Failed to create server TLS config: {}", e)))?;
+            config.set_tls_config(tls_config);
+        } else {
+            return Err(crate::Error::Config("Server requires cert_path and key_path".to_string()));
+        }
+
+        // Enable multipath
+        config.enable_multipath(self.enable_multipath);
+
+        // Set congestion control
+        config.set_congestion_control_algorithm(self.congestion_control);
+
+        // Set timeouts
+        config.set_max_idle_timeout(self.idle_timeout.as_millis() as u64);
+
+        // Set initial RTT
+        config.set_initial_rtt(self.initial_rtt_ms);
+
         Ok(config)
     }
 }

@@ -14,7 +14,7 @@ use crate::error::ClientError;
 use crate::pacing::{cwnd_target_polls, inflight_packet_estimate};
 use crate::streams::{spawn_acceptor, Command};
 use slipstream_core::ResolverMode;
-use slipstream_dns::{build_qname, encode_query, QueryParams, CLASS_IN, RR_TXT};
+use slipstream_dns::{build_qname, encode_query, fragment_packet, max_payload_len_for_domain, QueryParams, CLASS_IN, RR_TXT};
 use slipstream_quic::{Client, ClientConnection, Config as QuicConfig};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,7 +25,6 @@ use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
 // Protocol defaults matching picoquic runtime
-const SLIPSTREAM_SNI: &str = "test.example.com";
 const DNS_WAKE_DELAY_MAX_US: u64 = 10_000_000;
 const DNS_POLL_SLICE_US: u64 = 50_000;
 const MAX_PACKET_SIZE: usize = 1500;
@@ -64,8 +63,8 @@ pub async fn run_client(config: &TquicClientConfig<'_>) -> Result<i32, ClientErr
         return Err(ClientError::new("At least one resolver is required"));
     }
 
-    // Bind UDP socket for DNS queries
-    let udp = UdpSocket::bind("0.0.0.0:0")
+    // Bind UDP socket for DNS queries (use IPv6 dual-stack for compatibility with tquic)
+    let udp = UdpSocket::bind("[::]:0")
         .await
         .map_err(|e| ClientError::new(format!("Failed to bind UDP socket: {}", e)))?;
     let local_addr = udp
@@ -82,16 +81,18 @@ pub async fn run_client(config: &TquicClientConfig<'_>) -> Result<i32, ClientErr
     spawn_acceptor(listener, command_tx.clone());
     info!("Listening on TCP port {}", config.tcp_listen_port);
 
-    // Create tquic client config with multipath
-    let mut quic_config = QuicConfig::new().with_multipath(true);
+    // Create tquic client config with multipath and DNS-appropriate packet size
+    let mut quic_config = QuicConfig::new()
+        .with_multipath(true)
+        .with_send_udp_payload_size(mtu as usize);
     if config.keep_alive_interval > 0 {
         quic_config =
             quic_config.with_keep_alive(Duration::from_millis(config.keep_alive_interval as u64));
     }
 
-    // TODO: Add certificate pinning support for tquic
-    if config.cert.is_some() {
-        warn!("Certificate pinning not yet implemented for tquic runtime");
+    // Certificate pinning: use the provided cert as the only trusted CA
+    if let Some(cert) = config.cert {
+        quic_config = quic_config.with_ca(cert);
     }
 
     // TODO: Add congestion control override for tquic
@@ -107,10 +108,10 @@ pub async fn run_client(config: &TquicClientConfig<'_>) -> Result<i32, ClientErr
     let client = Client::new(quic_config)
         .map_err(|e| ClientError::new(format!("Failed to create QUIC client: {}", e)))?;
 
-    // Connect to first resolver
+    // Connect to first resolver using domain as SNI
     let server_addr = resolvers[0].addr;
     let mut conn = client
-        .connect(local_addr, server_addr, SLIPSTREAM_SNI)
+        .connect(local_addr, server_addr, config.domain)
         .map_err(|e| ClientError::new(format!("Failed to connect: {}", e)))?;
 
     info!("Connecting to {}", server_addr);
@@ -120,6 +121,7 @@ pub async fn run_client(config: &TquicClientConfig<'_>) -> Result<i32, ClientErr
     resolvers[0].path_id_tquic = Some(0);
 
     let mut dns_id = 1u16;
+    let mut packet_id = 0u16; // For fragment tracking
     let mut recv_buf = vec![0u8; 4096];
     let _send_buf = vec![0u8; MAX_PACKET_SIZE];
     let packet_loop_send_max = loop_burst_total(&resolvers, PACKET_LOOP_SEND_MAX);
@@ -286,28 +288,38 @@ pub async fn run_client(config: &TquicClientConfig<'_>) -> Result<i32, ClientErr
                     .saturating_add(packet_data.len() as u64);
             }
 
-            // Encode QUIC packet as DNS query
-            let qname = build_qname(&packet_data, config.domain)
-                .map_err(|e| ClientError::new(format!("Failed to build qname: {}", e)))?;
-            let params = QueryParams {
-                id: dns_id,
-                qname: &qname,
-                qtype: RR_TXT,
-                qclass: CLASS_IN,
-                rd: true,
-                cd: false,
-                qdcount: 1,
-                is_query: true,
-            };
-            dns_id = dns_id.wrapping_add(1);
+            // Get max payload for domain
+            let max_payload = max_payload_len_for_domain(config.domain)
+                .map_err(|e| ClientError::new(format!("Failed to get max payload: {}", e)))?;
 
-            let dns_packet = encode_query(&params)
-                .map_err(|e| ClientError::new(format!("Failed to encode DNS query: {}", e)))?;
+            // Fragment the QUIC packet if needed
+            let fragments = fragment_packet(&packet_data, packet_id, max_payload);
+            packet_id = packet_id.wrapping_add(1);
 
-            // Send to resolver
-            udp.send_to(&dns_packet, dest)
-                .await
-                .map_err(|e| ClientError::new(format!("Failed to send DNS: {}", e)))?;
+            // Send each fragment as a separate DNS query
+            for fragment in fragments {
+                let qname = build_qname(&fragment, config.domain)
+                    .map_err(|e| ClientError::new(format!("Failed to build qname: {}", e)))?;
+                let params = QueryParams {
+                    id: dns_id,
+                    qname: &qname,
+                    qtype: RR_TXT,
+                    qclass: CLASS_IN,
+                    rd: true,
+                    cd: false,
+                    qdcount: 1,
+                    is_query: true,
+                };
+                dns_id = dns_id.wrapping_add(1);
+
+                let dns_packet = encode_query(&params)
+                    .map_err(|e| ClientError::new(format!("Failed to encode DNS query: {}", e)))?;
+
+                // Send to resolver
+                udp.send_to(&dns_packet, dest)
+                    .await
+                    .map_err(|e| ClientError::new(format!("Failed to send DNS: {}", e)))?;
+            }
         }
 
         // Path event handling and polling (for authoritative mode)

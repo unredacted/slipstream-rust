@@ -174,7 +174,7 @@ impl PacketSendHandler for PacketSender {
     fn on_packets_send(&self, pkts: &[(Vec<u8>, PacketInfo)]) -> tquic::Result<usize> {
         let mut pending = self.pending_packets.borrow_mut();
         for (data, info) in pkts {
-            pending.push((data.clone(), info.clone()));
+            pending.push((data.clone(), *info));
         }
         Ok(pkts.len())
     }
@@ -213,13 +213,13 @@ impl ClientConnection {
         self.endpoint
             .recv(&mut buf, &info)
             .map_err(|e| Error::Quic(e.to_string()))?;
-        self.endpoint.process_connections();
+        let _ = self.endpoint.process_connections();
         Ok(())
     }
 
     /// Get packets to send.
     pub fn poll_send(&mut self) -> Vec<(Vec<u8>, SocketAddr)> {
-        self.endpoint.process_connections();
+        let _ = self.endpoint.process_connections();
         self.sender
             .take_packets()
             .into_iter()
@@ -235,7 +235,7 @@ impl ClientConnection {
     /// Handle timeout.
     pub fn on_timeout(&mut self) {
         self.endpoint.on_timeout(std::time::Instant::now());
-        self.endpoint.process_connections();
+        let _ = self.endpoint.process_connections();
     }
 
     /// Open a new bidirectional stream.

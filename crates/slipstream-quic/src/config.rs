@@ -112,7 +112,7 @@ impl Config {
 
     /// Convert to tquic Config for server.
     pub fn to_tquic_server_config(&self) -> Result<tquic::Config, crate::Error> {
-        let mut config = self.to_tquic_client_config()?;
+        let config = self.to_tquic_client_config()?;
 
         // Server-specific setup will be done when creating the endpoint
         Ok(config)

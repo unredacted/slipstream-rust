@@ -21,6 +21,7 @@ struct ServerState {
     connections: HashMap<u64, ConnectionInfo>,
 }
 
+#[allow(dead_code)]
 struct ConnectionInfo {
     peer_addr: SocketAddr,
     ready: bool,
@@ -275,7 +276,7 @@ impl PacketSendHandler for PacketSender {
     fn on_packets_send(&self, pkts: &[(Vec<u8>, PacketInfo)]) -> tquic::Result<usize> {
         let mut pending = self.pending_packets.borrow_mut();
         for (data, info) in pkts {
-            pending.push((data.clone(), info.clone()));
+            pending.push((data.clone(), *info));
         }
         Ok(pkts.len())
     }

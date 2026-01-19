@@ -71,18 +71,6 @@ fn main() {
         std::process::exit(2);
     });
 
-    let config = ClientConfig {
-        tcp_listen_port: args.tcp_listen_port,
-        resolvers: &resolvers,
-        congestion_control: args.congestion_control.as_deref(),
-        gso: args.gso,
-        domain: &args.domain,
-        cert: args.cert.as_deref(),
-        keep_alive_interval: args.keep_alive_interval as usize,
-        debug_poll: args.debug_poll,
-        debug_streams: args.debug_streams,
-    };
-
     let runtime = Builder::new_current_thread()
         .enable_io()
         .enable_time()

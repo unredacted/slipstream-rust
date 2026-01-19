@@ -7,11 +7,9 @@ mod path;
 
 use self::path::{
     apply_path_mode_tquic, drain_path_events_tquic, fetch_path_quality_tquic,
-    find_resolver_by_addr_mut, loop_burst_total, path_poll_burst_max, PathQuality,
+    find_resolver_by_addr_mut, loop_burst_total,
 };
-use crate::dns::{
-    expire_inflight_polls, normalize_dual_stack_addr, resolve_resolvers, ResolverState,
-};
+use crate::dns::{expire_inflight_polls, normalize_dual_stack_addr, resolve_resolvers};
 use crate::error::ClientError;
 use crate::pacing::{cwnd_target_polls, inflight_packet_estimate};
 use crate::streams::{spawn_acceptor, Command};
@@ -49,6 +47,7 @@ pub struct TquicClientConfig<'a> {
 }
 
 /// Stream state for tracking QUIC stream to TCP connection mapping.
+#[allow(dead_code)]
 struct StreamState {
     write_tx: mpsc::UnboundedSender<Vec<u8>>,
     queued_bytes: usize,
@@ -123,13 +122,12 @@ pub async fn run_client_tquic(config: &TquicClientConfig<'_>) -> Result<i32, Cli
 
     let mut dns_id = 1u16;
     let mut recv_buf = vec![0u8; 4096];
-    let mut send_buf = vec![0u8; MAX_PACKET_SIZE];
+    let _send_buf = vec![0u8; MAX_PACKET_SIZE];
     let packet_loop_send_max = loop_burst_total(&resolvers, PACKET_LOOP_SEND_MAX);
     let packet_loop_recv_max = loop_burst_total(&resolvers, PACKET_LOOP_RECV_MAX);
     let mut streams: HashMap<u64, StreamState> = HashMap::new();
     let mut zero_send_loops = 0u64;
     let mut ready = false;
-    let mut closing = false;
 
     // Main event loop (mirrors picoquic runtime loop)
     loop {
@@ -155,10 +153,7 @@ pub async fn run_client_tquic(config: &TquicClientConfig<'_>) -> Result<i32, Cli
         }
 
         if conn.is_closing() {
-            if !closing {
-                closing = true;
-                info!("Connection closing");
-            }
+            info!("Connection closing");
             break;
         }
 
@@ -339,8 +334,8 @@ fn handle_command_tquic(
     conn: &mut ClientConnection,
     streams: &mut HashMap<u64, StreamState>,
     command: Command,
-    command_tx: &mpsc::UnboundedSender<Command>,
-    data_notify: &Arc<Notify>,
+    _command_tx: &mpsc::UnboundedSender<Command>,
+    _data_notify: &Arc<Notify>,
     debug_streams: bool,
 ) -> Result<(), ClientError> {
     match command {

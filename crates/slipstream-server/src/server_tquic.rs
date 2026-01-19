@@ -12,9 +12,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket as TokioUdpSocket};
 use tokio::sync::mpsc;
 use tokio::time::sleep;
@@ -67,6 +65,7 @@ pub struct TquicServerConfig {
 }
 
 /// Stream state for tracking QUIC stream to TCP connection mapping.
+#[allow(dead_code)]
 struct StreamState {
     tcp_stream: Option<TcpStream>,
     write_tx: mpsc::UnboundedSender<StreamWrite>,
@@ -82,6 +81,7 @@ enum StreamWrite {
 }
 
 /// Slot for pending DNS response (mirrors Slot from server.rs).
+#[allow(dead_code)]
 struct Slot {
     peer: SocketAddr,
     id: u16,
@@ -95,10 +95,10 @@ struct Slot {
 /// Run the server using tquic (1:1 port of run_server from server.rs).
 #[allow(dead_code)]
 pub async fn run_server_tquic(config: &TquicServerConfig) -> Result<i32, TquicServerError> {
-    let target_addr = resolve_host_port(&config.target_address)
+    let _target_addr = resolve_host_port(&config.target_address)
         .map_err(|e| TquicServerError::new(e.to_string()))?;
 
-    let (command_tx, mut command_rx) = mpsc::unbounded_channel::<()>(); // Placeholder for commands
+    let (_command_tx, mut command_rx) = mpsc::unbounded_channel::<()>(); // Placeholder for commands
     let debug_streams = config.debug_streams;
 
     // Create tquic server config with multipath and TLS
@@ -133,7 +133,7 @@ pub async fn run_server_tquic(config: &TquicServerConfig) -> Result<i32, TquicSe
     }
 
     let mut recv_buf = vec![0u8; DNS_MAX_QUERY_SIZE];
-    let mut send_buf = vec![0u8; MAX_PACKET_SIZE];
+    let _send_buf = vec![0u8; MAX_PACKET_SIZE];
     let mut streams: HashMap<(u64, u64), StreamState> = HashMap::new();
 
     loop {

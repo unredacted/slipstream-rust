@@ -1,7 +1,8 @@
 //! Stream handling for QUIC connections.
 
+#![allow(dead_code)]
+
 use crate::error::Error;
-use std::io;
 
 /// A send stream for writing data.
 pub struct SendStream {
@@ -27,7 +28,7 @@ impl SendStream {
     }
 
     /// Write all data to the stream.
-    pub async fn write_all(&mut self, data: &[u8]) -> Result<(), Error> {
+    pub async fn write_all(&mut self, _data: &[u8]) -> Result<(), Error> {
         // TODO: Implement with tquic
         Ok(())
     }
@@ -39,7 +40,7 @@ impl SendStream {
     }
 
     /// Reset the stream with an error code.
-    pub fn reset(&mut self, error_code: u64) -> Result<(), Error> {
+    pub fn reset(&mut self, _error_code: u64) -> Result<(), Error> {
         // TODO: Implement with tquic
         Ok(())
     }
@@ -63,14 +64,14 @@ impl RecvStream {
     }
 
     /// Read data from the stream.
-    pub async fn read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, Error> {
+    pub async fn read(&mut self, _buf: &mut [u8]) -> Result<Option<usize>, Error> {
         // TODO: Implement with tquic
         // Returns None on FIN, Some(n) for data, Err on error
         Ok(Some(0))
     }
 
     /// Stop reading from the stream with an error code.
-    pub fn stop(&mut self, error_code: u64) -> Result<(), Error> {
+    pub fn stop(&mut self, _error_code: u64) -> Result<(), Error> {
         // TODO: Implement with tquic
         Ok(())
     }

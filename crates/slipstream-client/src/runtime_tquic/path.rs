@@ -6,12 +6,11 @@
 use crate::dns::{normalize_dual_stack_addr, ResolverState};
 use crate::error::ClientError;
 use slipstream_ffi::ResolverMode;
-use slipstream_quic::multipath::{PathInfo, PathManager};
+use slipstream_quic::multipath::PathManager;
 use slipstream_quic::ClientConnection;
 use std::net::SocketAddr;
 
 const AUTHORITATIVE_LOOP_MULTIPLIER: usize = 4;
-const PACKET_LOOP_SEND_MAX: usize = 64;
 
 /// Apply path mode settings to a resolver path via tquic.
 pub(crate) fn apply_path_mode_tquic(
@@ -71,6 +70,7 @@ pub(crate) fn fetch_path_quality_tquic(
 }
 
 /// Path quality metrics.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PathQuality {
     pub rtt: u64,
@@ -127,8 +127,9 @@ pub(crate) fn loop_burst_total(resolvers: &[ResolverState], base: usize) -> usiz
 }
 
 /// Calculate max poll burst for a path.
+#[allow(dead_code)]
 pub(crate) fn path_poll_burst_max(resolver: &ResolverState) -> usize {
-    PACKET_LOOP_SEND_MAX.saturating_mul(path_loop_multiplier(resolver.mode))
+    64usize.saturating_mul(path_loop_multiplier(resolver.mode))
 }
 
 fn path_loop_multiplier(mode: ResolverMode) -> usize {

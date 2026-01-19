@@ -15,8 +15,8 @@ use crate::pacing::{cwnd_target_polls, inflight_packet_estimate};
 use crate::streams::{spawn_acceptor, Command};
 use slipstream_core::ResolverMode;
 use slipstream_dns::{
-    build_qname, encode_query, fragment_packet, max_payload_len_for_domain, QueryParams, CLASS_IN,
-    RR_TXT,
+    build_qname, decode_response, encode_query, fragment_packet, is_fragmented,
+    max_payload_len_for_domain, FragmentBuffer, QueryParams, CLASS_IN, RR_TXT,
 };
 use slipstream_quic::{Client, ClientConnection, Config as QuicConfig};
 use std::collections::HashMap;
@@ -25,7 +25,7 @@ use std::time::Duration;
 use tokio::net::{TcpListener as TokioTcpListener, UdpSocket};
 use tokio::sync::{mpsc, Notify};
 use tokio::time::sleep;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 // Protocol defaults matching picoquic runtime
 const DNS_WAKE_DELAY_MAX_US: u64 = 10_000_000;
@@ -125,6 +125,7 @@ pub async fn run_client(config: &TquicClientConfig<'_>) -> Result<i32, ClientErr
 
     let mut dns_id = 1u16;
     let mut packet_id = 0u16; // For fragment tracking
+    let mut recv_fragment_buffer = FragmentBuffer::new(); // For reassembling fragmented responses
     let mut recv_buf = vec![0u8; 4096];
     let _send_buf = vec![0u8; MAX_PACKET_SIZE];
     let packet_loop_send_max = loop_burst_total(&resolvers, PACKET_LOOP_SEND_MAX);
@@ -229,18 +230,48 @@ pub async fn run_client(config: &TquicClientConfig<'_>) -> Result<i32, ClientErr
             recv = udp.recv_from(&mut recv_buf) => {
                 match recv {
                     Ok((size, from)) => {
-                        // TODO: Decode DNS response and extract QUIC payload
-                        // For now, try processing raw packet
-                        if let Err(e) = conn.recv(&recv_buf[..size], from) {
-                            debug!("Failed to process packet from {}: {}", from, e);
+                        // Decode DNS response to extract QUIC payload
+                        if let Some(quic_payload) = decode_response(&recv_buf[..size]) {
+                            // Handle fragmented responses
+                            let complete_packet = if is_fragmented(&quic_payload) {
+                                recv_fragment_buffer.receive_fragment(&quic_payload)
+                            } else {
+                                Some(quic_payload)
+                            };
+
+                            if let Some(data) = complete_packet {
+                                if let Err(e) = conn.recv(&data, from) {
+                                    debug!("Failed to process QUIC packet from {}: {}", from, e);
+                                }
+                            }
+                        } else {
+                            // Not a valid DNS response - try as raw QUIC packet
+                            // (fallback for empty responses or direct UDP)
+                            if let Err(e) = conn.recv(&recv_buf[..size], from) {
+                                trace!("Failed to process raw packet from {}: {}", from, e);
+                            }
                         }
 
                         // Try to receive more packets in burst
                         for _ in 1..packet_loop_recv_max {
                             match udp.try_recv_from(&mut recv_buf) {
                                 Ok((size, from)) => {
-                                    if let Err(e) = conn.recv(&recv_buf[..size], from) {
-                                        debug!("Failed to process packet: {}", e);
+                                    // Decode DNS response
+                                    if let Some(quic_payload) = decode_response(&recv_buf[..size]) {
+                                        let complete_packet = if is_fragmented(&quic_payload) {
+                                            recv_fragment_buffer.receive_fragment(&quic_payload)
+                                        } else {
+                                            Some(quic_payload)
+                                        };
+
+                                        if let Some(data) = complete_packet {
+                                            if let Err(e) = conn.recv(&data, from) {
+                                                debug!("Failed to process QUIC packet: {}", e);
+                                            }
+                                        }
+                                    } else {
+                                        // Fallback to raw packet
+                                        let _ = conn.recv(&recv_buf[..size], from);
                                     }
                                 }
                                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
@@ -259,6 +290,27 @@ pub async fn run_client(config: &TquicClientConfig<'_>) -> Result<i32, ClientErr
             // Handle timeout
             _ = sleep(timeout) => {
                 conn.on_timeout();
+            }
+        }
+
+        // Read from QUIC streams and forward to TCP connections
+        for stream_id in conn.readable_streams() {
+            let mut read_buf = vec![0u8; 4096];
+            match conn.stream_read(stream_id, &mut read_buf) {
+                Ok((n, fin)) if n > 0 => {
+                    if let Some(state) = streams.get(&stream_id) {
+                        // Send data to TCP writer via channel
+                        let _ = state.write_tx.send(read_buf[..n].to_vec());
+                    }
+                    if fin {
+                        streams.remove(&stream_id);
+                    }
+                }
+                Ok((_, true)) => {
+                    // Stream finished
+                    streams.remove(&stream_id);
+                }
+                _ => {}
             }
         }
 
@@ -357,7 +409,7 @@ fn handle_command(
             let _ = tcp_stream.set_nodelay(true);
             match conn.open_bi() {
                 Ok(stream_id) => {
-                    let (write_tx, _write_rx) = mpsc::unbounded_channel();
+                    let (write_tx, write_rx) = mpsc::unbounded_channel();
                     streams.insert(
                         stream_id,
                         StreamState {
@@ -373,13 +425,18 @@ fn handle_command(
                         info!("Accepted TCP stream {}", stream_id);
                     }
 
-                    // Split TCP stream and spawn reader to forward TCP→QUIC
-                    let (tcp_read, _tcp_write) = tcp_stream.into_split();
+                    // Split TCP stream and spawn reader/writer for bidirectional forwarding
+                    let (tcp_read, tcp_write) = tcp_stream.into_split();
+                    
+                    // TCP→QUIC: Read TCP data and send to QUIC stream
                     crate::streams::spawn_tcp_to_quic_reader(
                         stream_id,
                         tcp_read,
                         command_tx.clone(),
                     );
+                    
+                    // QUIC→TCP: Write data from QUIC stream to TCP
+                    crate::streams::spawn_quic_to_tcp_writer(tcp_write, write_rx);
                 }
                 Err(e) => {
                     warn!("Failed to open QUIC stream: {}", e);

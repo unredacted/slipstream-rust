@@ -67,6 +67,21 @@ pub(crate) fn spawn_tcp_to_quic_reader(
     });
 }
 
+/// Spawn a task that writes data from QUIC to TCP.
+pub(crate) fn spawn_quic_to_tcp_writer(
+    mut tcp_write: tokio::net::tcp::OwnedWriteHalf,
+    mut data_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+) {
+    tokio::spawn(async move {
+        while let Some(data) = data_rx.recv().await {
+            if tcp_write.write_all(&data).await.is_err() {
+                break;
+            }
+        }
+        let _ = tcp_write.shutdown().await;
+    });
+}
+
 pub(crate) fn spawn_client_reader(
     stream_id: u64,
     mut read_half: tokio::net::tcp::OwnedReadHalf,

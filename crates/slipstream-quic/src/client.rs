@@ -285,6 +285,17 @@ impl ClientConnection {
         }
     }
 
+    /// Get stream IDs that have readable data.
+    pub fn readable_streams(&self) -> Vec<u64> {
+        self.state
+            .borrow()
+            .streams
+            .iter()
+            .filter(|(_, s)| s.readable)
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
     /// Drain path events.
     pub fn drain_path_events(&mut self) -> Vec<PathEvent> {
         std::mem::take(&mut self.state.borrow_mut().path_events)

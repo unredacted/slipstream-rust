@@ -126,8 +126,9 @@ impl Config {
         // Certificate pinning: if ca_path is set, use it as trusted CA and enable verification
         // With self-signed certs, the cert IS the CA, so verification validates the pinned cert
         if let Some(ca_path) = &self.ca_path {
-            tls_config.set_ca_certs(ca_path)
-                .map_err(|e| crate::Error::Config(format!("Failed to set CA cert for pinning: {}", e)))?;
+            tls_config.set_ca_certs(ca_path).map_err(|e| {
+                crate::Error::Config(format!("Failed to set CA cert for pinning: {}", e))
+            })?;
             // Enable verification when pinning is configured
             tls_config.set_verify(true);
         } else if self.verify_cert_chain {
@@ -163,11 +164,15 @@ impl Config {
 
         // Create server TLS config with certificate and key
         if let (Some(cert), Some(key)) = (&self.cert_path, &self.key_path) {
-            let tls_config = tquic::TlsConfig::new_server_config(cert, key, self.alpn.clone(), true)
-                .map_err(|e| crate::Error::Config(format!("Failed to create server TLS config: {}", e)))?;
+            let tls_config =
+                tquic::TlsConfig::new_server_config(cert, key, self.alpn.clone(), true).map_err(
+                    |e| crate::Error::Config(format!("Failed to create server TLS config: {}", e)),
+                )?;
             config.set_tls_config(tls_config);
         } else {
-            return Err(crate::Error::Config("Server requires cert_path and key_path".to_string()));
+            return Err(crate::Error::Config(
+                "Server requires cert_path and key_path".to_string(),
+            ));
         }
 
         // Enable multipath

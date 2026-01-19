@@ -14,7 +14,10 @@ use crate::error::ClientError;
 use crate::pacing::{cwnd_target_polls, inflight_packet_estimate};
 use crate::streams::{spawn_acceptor, Command};
 use slipstream_core::ResolverMode;
-use slipstream_dns::{build_qname, encode_query, fragment_packet, max_payload_len_for_domain, QueryParams, CLASS_IN, RR_TXT};
+use slipstream_dns::{
+    build_qname, encode_query, fragment_packet, max_payload_len_for_domain, QueryParams, CLASS_IN,
+    RR_TXT,
+};
 use slipstream_quic::{Client, ClientConnection, Config as QuicConfig};
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -4,7 +4,8 @@
 
 use slipstream_core::{resolve_host_port, HostPort};
 use slipstream_dns::{
-    decode_query_with_domains, encode_response, DecodeQueryError, FragmentBuffer, Question, Rcode, ResponseParams,
+    decode_query_with_domains, encode_response, DecodeQueryError, FragmentBuffer, Question, Rcode,
+    ResponseParams,
 };
 use slipstream_quic::{Config as QuicConfig, Server};
 use std::collections::HashMap;

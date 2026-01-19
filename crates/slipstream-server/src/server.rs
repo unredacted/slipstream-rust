@@ -4,8 +4,8 @@
 
 use slipstream_core::{resolve_host_port, HostPort};
 use slipstream_dns::{
-    decode_query_with_domains, encode_response, DecodeQueryError, FragmentBuffer, Question, Rcode,
-    ResponseParams,
+    decode_query_with_domains, encode_response, is_fragmented, DecodeQueryError, FragmentBuffer,
+    Question, Rcode, ResponseParams,
 };
 use slipstream_quic::{Config as QuicConfig, Server};
 use std::collections::HashMap;
@@ -296,20 +296,22 @@ fn decode_slot_tquic(
 ) -> Result<Option<Slot>, TquicServerError> {
     match decode_query_with_domains(packet, domains) {
         Ok(query) => {
-            // Try to reassemble fragment
-            if let Some(complete_packet) = fragment_buffer.receive_fragment(&query.payload) {
-                // Complete packet - feed to tquic
-                if let Err(e) = server.recv(&complete_packet, peer) {
-                    debug!("Failed to process QUIC packet: {}", e);
+            // Check if this is a fragmented packet (has magic byte header)
+            if is_fragmented(&query.payload) {
+                // Try to reassemble fragment
+                if let Some(complete_packet) = fragment_buffer.receive_fragment(&query.payload) {
+                    // Complete packet - feed to tquic
+                    if let Err(e) = server.recv(&complete_packet, peer) {
+                        debug!("Failed to process QUIC packet: {}", e);
+                    }
                 }
-            } else if query.payload.len() < 4 {
-                // Too small to be a fragment, try direct processing
+                // If fragment is incomplete, wait for more pieces
+            } else {
+                // Raw QUIC packet (no fragment header) - pass directly to tquic
                 if let Err(e) = server.recv(&query.payload, peer) {
                     debug!("Failed to process QUIC packet (direct): {}", e);
                 }
             }
-            // Note: If it's a fragment still waiting for more pieces, we just return
-            // the slot for DNS response purposes but don't process the QUIC data yet
 
             Ok(Some(Slot {
                 peer: normalize_dual_stack_addr(peer),

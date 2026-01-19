@@ -8,8 +8,11 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-/// Header size for fragment metadata: packet_id (2) + frag_num (1) + total (1)
-pub const FRAGMENT_HEADER_SIZE: usize = 4;
+/// Magic byte to identify fragment packets (ASCII 'S' for Slipstream)
+const FRAGMENT_MAGIC: u8 = 0x53;
+
+/// Header size for fragment metadata: magic (1) + packet_id (2) + frag_num (1) + total (1)
+pub const FRAGMENT_HEADER_SIZE: usize = 5;
 
 /// Default timeout for incomplete fragment reassembly (5 seconds)
 const FRAGMENT_TIMEOUT_SECS: u64 = 5;
@@ -43,6 +46,7 @@ pub fn fragment_packet(packet: &[u8], packet_id: u16, max_payload: usize) -> Vec
     // If packet fits in one fragment, just add header
     if packet.len() <= chunk_size {
         let mut frag = Vec::with_capacity(FRAGMENT_HEADER_SIZE + packet.len());
+        frag.push(FRAGMENT_MAGIC);
         frag.extend_from_slice(&packet_id.to_be_bytes());
         frag.push(0); // frag_num
         frag.push(1); // total
@@ -59,6 +63,7 @@ pub fn fragment_packet(packet: &[u8], packet_id: u16, max_payload: usize) -> Vec
         .take(255) // Max 255 fragments
         .map(|(i, chunk)| {
             let mut frag = Vec::with_capacity(FRAGMENT_HEADER_SIZE + chunk.len());
+            frag.push(FRAGMENT_MAGIC);
             frag.extend_from_slice(&packet_id.to_be_bytes());
             frag.push(i as u8);
             frag.push(total);
@@ -71,26 +76,29 @@ pub fn fragment_packet(packet: &[u8], packet_id: u16, max_payload: usize) -> Vec
 /// Parse a fragment header.
 ///
 /// # Returns
-/// (packet_id, frag_num, total, payload) or None if invalid
+/// (packet_id, frag_num, total, payload) or None if not a valid fragment
 pub fn parse_fragment(data: &[u8]) -> Option<(u16, u8, u8, &[u8])> {
     if data.len() < FRAGMENT_HEADER_SIZE {
         return None;
     }
-    let packet_id = u16::from_be_bytes([data[0], data[1]]);
-    let frag_num = data[2];
-    let total = data[3];
+    // Check magic byte
+    if data[0] != FRAGMENT_MAGIC {
+        return None;
+    }
+    let packet_id = u16::from_be_bytes([data[1], data[2]]);
+    let frag_num = data[3];
+    let total = data[4];
     let payload = &data[FRAGMENT_HEADER_SIZE..];
     Some((packet_id, frag_num, total, payload))
 }
 
-/// Check if data represents a fragmented packet (has fragment header).
+/// Check if data represents a fragmented packet (has our magic byte header).
 pub fn is_fragmented(data: &[u8]) -> bool {
     if data.len() < FRAGMENT_HEADER_SIZE {
         return false;
     }
-    // Check if it looks like a fragment (total > 0)
-    let total = data[3];
-    total > 0
+    // Check magic byte
+    data[0] == FRAGMENT_MAGIC
 }
 
 /// Buffer for reassembling fragmented QUIC packets.

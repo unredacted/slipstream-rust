@@ -629,7 +629,7 @@ run_case() {
     --bytes "${TRANSFER_BYTES}" \
     --chunk-size "${CHUNK_SIZE}" \
     --timeout "${SOCKET_TIMEOUT}" \
-    "${target_preface_args[@]}" \
+    ${target_preface_args[@]+"${target_preface_args[@]}"} \
     --log "${case_dir}/target.jsonl" \
     >"${case_dir}/target.log" 2>&1 &
   TARGET_PID=$!
@@ -647,7 +647,7 @@ run_case() {
     --tcp-listen-port "${CLIENT_TCP_PORT}" \
     --"${RESOLVER_MODE}" "127.0.0.1:${resolver_port}" \
     --domain "${DOMAIN}" \
-    "${client_extra_args[@]}" \
+    ${client_extra_args[@]+"${client_extra_args[@]}"} \
     >"${case_dir}/client.log" 2>&1 &
   CLIENT_PID=$!
 
@@ -664,7 +664,7 @@ run_case() {
     --bytes "${TRANSFER_BYTES}" \
     --chunk-size "${CHUNK_SIZE}" \
     --timeout "${SOCKET_TIMEOUT}" \
-    "${preface_args[@]}" \
+    ${preface_args[@]+"${preface_args[@]}"} \
     --log "${case_dir}/bench.jsonl" \
     | tee "${case_dir}/bench.log"
 

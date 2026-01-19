@@ -155,6 +155,14 @@ impl Config {
             config.set_send_udp_payload_size(size);
         }
 
+        // Set flow control limits for streams
+        // These are advertised to the peer during handshake
+        config.set_initial_max_streams_bidi(200);
+        config.set_initial_max_streams_uni(100);
+        config.set_initial_max_data(10 * 1024 * 1024); // 10MB connection limit
+        config.set_initial_max_stream_data_bidi_local(5 * 1024 * 1024); // 5MB per local stream
+        config.set_initial_max_stream_data_bidi_remote(5 * 1024 * 1024); // 5MB per remote stream
+
         Ok(config)
     }
 
@@ -186,6 +194,15 @@ impl Config {
 
         // Set initial RTT
         config.set_initial_rtt(self.initial_rtt_ms);
+
+        // Set flow control limits for streams
+        // These are advertised to the peer during handshake
+        // CRITICAL: initial_max_stream_data_bidi_remote grants credits to client-initiated streams
+        config.set_initial_max_streams_bidi(200);
+        config.set_initial_max_streams_uni(100);
+        config.set_initial_max_data(10 * 1024 * 1024); // 10MB connection limit
+        config.set_initial_max_stream_data_bidi_local(5 * 1024 * 1024); // 5MB per local stream
+        config.set_initial_max_stream_data_bidi_remote(5 * 1024 * 1024); // 5MB per remote (client) stream
 
         Ok(config)
     }

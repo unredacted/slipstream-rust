@@ -13,13 +13,14 @@ jobs:
     steps:
       - name: Check out slipstream-rust
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config libssl-dev python3
+          sudo apt-get install -y pkg-config libssl-dev python3
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -62,14 +63,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # C repo interop disabled (C repo currently broken).
-          # - name: run_local
-          #   script: run_local.sh
-          # - name: run_rust_client
-          #   script: run_rust_client.sh
-          # - name: run_rust_server
-          #   script: run_rust_server.sh
           - name: rust-rust
             script: run_rust_rust.sh
             domains: ""
@@ -81,28 +74,20 @@ jobs:
     steps:
       - name: Check out slipstream-rust
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      # C repo interop disabled (C repo currently broken).
-      # - name: Check out C slipstream
-      #   uses: actions/checkout@v4
-      #   with:
-      #     repository: EndPositive/slipstream
-      #     path: slipstream-c
-      #     submodules: recursive
 
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y meson ninja-build cmake pkg-config libssl-dev python3
+          sudo apt-get install -y pkg-config libssl-dev python3
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run interop script
         env:
-          SLIPSTREAM_DIR: slipstream-c
           RUST_BACKTRACE: "1"
           DOMAINS: ${{ matrix.domains }}
           CLIENT_DOMAIN: ${{ matrix.client_domain }}
@@ -118,7 +103,6 @@ jobs:
         include:
           - name: rust-rust
             script: run_rust_rust_10mb.sh
-            needs_c: false
             client_args: ""
             resolver_mode: resolver
             min_exfil: "5"
@@ -126,7 +110,6 @@ jobs:
             artifact_glob: bench-rust-rust-*
           - name: rust-rust-auth
             script: run_rust_rust_10mb.sh
-            needs_c: false
             client_args: ""
             resolver_mode: authoritative
             min_exfil: "5"
@@ -134,42 +117,28 @@ jobs:
             artifact_glob: bench-rust-rust-*
           - name: rust-rust-mixed
             script: run_rust_rust_10mb.sh
-            needs_c: false
             client_args: ""
             resolver_mode: mixed
             min_exfil: "5"
             min_download: "25"
             artifact_glob: bench-rust-rust-mixed-*
-          # C repo benchmark disabled (C repo currently broken).
-          # - name: c-c
-          #   script: run_c_c_10mb.sh
-          #   needs_c: true
     steps:
       - name: Check out slipstream-rust
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      # C repo benchmark disabled (C repo currently broken).
-      # - name: Check out C slipstream
-      #   if: matrix.needs_c
-      #   uses: actions/checkout@v4
-      #   with:
-      #     repository: EndPositive/slipstream
-      #     path: slipstream-c
-      #     submodules: recursive
 
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y meson ninja-build cmake pkg-config libssl-dev python3
+          sudo apt-get install -y pkg-config libssl-dev python3
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run benchmark
         env:
-          SLIPSTREAM_DIR: slipstream-c
           RUNS: "5"
           TRANSFER_BYTES: "10485760"
           CLIENT_ARGS: ${{ matrix.client_args }}
@@ -193,13 +162,14 @@ jobs:
     steps:
       - name: Check out slipstream-rust
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config libssl-dev python3 procps
+          sudo apt-get install -y pkg-config libssl-dev python3 procps
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable

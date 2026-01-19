@@ -2,6 +2,17 @@
 //!
 //! This module provides the QUIC server runtime using the pure-Rust tquic library.
 
+// TODO(flow-control): Implement proper flow control handling:
+//   - Use stream_readable_iter() to find streams with data
+//   - Use stream_writable_iter() to find streams with capacity
+//   - Call stream_want_read(true) after reading to re-register interest
+//   - tquic "Done" error means no data available, not fatal
+
+// TODO(congestion-control): Consider congestion control tuning:
+//   - Current: using default CUBIC
+//   - Consider BBR for high-latency DNS tunnel paths
+//   - May need larger initial_max_data for bulk transfers
+
 use slipstream_core::{resolve_host_port, HostPort};
 use slipstream_dns::{
     decode_query_with_domains, encode_response, is_fragmented, DecodeQueryError, FragmentBuffer,
@@ -81,6 +92,21 @@ enum StreamWrite {
     Fin,
 }
 
+/// Synchronously shutdown a tokio TcpStream by converting to std.
+/// Tokio's async shutdown doesn't reliably deliver buffered data.
+fn sync_shutdown_tcp(tcp: TcpStream) {
+    match tcp.into_std() {
+        Ok(mut std_tcp) => {
+            let _ = std_tcp.set_nonblocking(false);
+            let _ = std::io::Write::flush(&mut std_tcp);
+            let _ = std_tcp.shutdown(std::net::Shutdown::Write);
+        }
+        Err(e) => {
+            tracing::warn!("Failed to convert tokio stream to std: {}", e);
+        }
+    }
+}
+
 /// Slot for pending DNS response (mirrors Slot from server.rs).
 #[allow(dead_code)]
 struct Slot {
@@ -140,6 +166,35 @@ pub async fn run_server(config: &TquicServerConfig) -> Result<i32, TquicServerEr
     loop {
         if SHOULD_SHUTDOWN.load(Ordering::Relaxed) {
             info!("Shutdown requested");
+            // Clean up all TCP connections before exiting
+            let stream_count = streams.len();
+            info!("Cleaning up {} TCP streams", stream_count);
+            for ((conn_id, stream_id), mut state) in streams.drain() {
+                if let Some(tcp) = state.tcp_stream.take() {
+                    debug!("Shutting down TCP stream for conn {} stream {}", conn_id, stream_id);
+                    // Convert tokio stream to std stream for reliable synchronous shutdown.
+                    // Tokio async shutdown doesn't reliably deliver buffered data.
+                    match tcp.into_std() {
+                        Ok(mut std_tcp) => {
+                            // Set blocking mode for sync operations
+                            if let Err(e) = std_tcp.set_nonblocking(false) {
+                                warn!("Failed to set blocking mode: {}", e);
+                            }
+                            // Flush and shutdown synchronously
+                            if let Err(e) = std::io::Write::flush(&mut std_tcp) {
+                                warn!("TCP sync flush error: {}", e);
+                            }
+                            if let Err(e) = std_tcp.shutdown(std::net::Shutdown::Write) {
+                                warn!("TCP sync shutdown error: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to convert tokio stream to std: {}", e);
+                        }
+                    }
+                }
+            }
+            info!("TCP cleanup complete");
             break;
         }
 
@@ -203,84 +258,158 @@ pub async fn run_server(config: &TquicServerConfig) -> Result<i32, TquicServerEr
         }
 
         // Process ready connections
-        for conn_id in server.ready_connections() {
+        let ready_conns = server.ready_connections();
+        if !ready_conns.is_empty() {
+            debug!("Processing {} ready connections", ready_conns.len());
+        }
+        for conn_id in ready_conns {
             let mut read_buf = vec![0u8; STREAM_READ_CHUNK_BYTES];
 
             // Try to read from all known streams for this connection
-            for stream_id in server.streams(conn_id) {
-                match server.stream_read(conn_id, stream_id, &mut read_buf) {
-                    Ok((n, fin)) if n > 0 => {
-                        if debug_streams {
+            let stream_ids = server.streams(conn_id);
+            if !stream_ids.is_empty() {
+                debug!("conn {}: {} streams to check", conn_id, stream_ids.len());
+            }
+            for stream_id in stream_ids {
+                // Read in a loop until all buffered data is drained
+                let mut read_count = 0;
+                loop {
+                    match server.stream_read(conn_id, stream_id, &mut read_buf) {
+                        Ok((n, fin)) if n > 0 => {
+                            read_count += 1;
                             debug!(
-                                "conn {} stream {}: read {} bytes, fin={}",
-                                conn_id, stream_id, n, fin
+                                "conn {} stream {}: read {} bytes (iteration {}), fin={}",
+                                conn_id, stream_id, n, read_count, fin
                             );
-                        }
 
-                        // Get or create TCP connection for this stream
-                        let stream_key = (conn_id, stream_id);
-                        let (write_tx, _) = mpsc::unbounded_channel();
-                        let state = streams.entry(stream_key).or_insert_with(|| StreamState {
-                            tcp_stream: None,
-                            write_tx,
-                            rx_bytes: 0,
-                            tx_bytes: 0,
-                        });
+                            // Get or create TCP connection for this stream
+                            let stream_key = (conn_id, stream_id);
+                            let (write_tx, _) = mpsc::unbounded_channel();
+                            let state = streams.entry(stream_key).or_insert_with(|| StreamState {
+                                tcp_stream: None,
+                                write_tx,
+                                rx_bytes: 0,
+                                tx_bytes: 0,
+                            });
 
-                        // Open TCP connection if not already connected
-                        if state.tcp_stream.is_none() {
-                            match TcpStream::connect(target_addr).await {
-                                Ok(tcp) => {
-                                    debug!(
-                                        "conn {} stream {}: TCP connected to {}",
-                                        conn_id, stream_id, target_addr
-                                    );
-                                    state.tcp_stream = Some(tcp);
+                            // Open TCP connection if not already connected
+                            if state.tcp_stream.is_none() {
+                                match TcpStream::connect(target_addr).await {
+                                    Ok(tcp) => {
+                                        // Disable Nagle's algorithm to ensure immediate delivery
+                                        if let Err(e) = tcp.set_nodelay(true) {
+                                            warn!(
+                                                "conn {} stream {}: failed to set TCP_NODELAY: {}",
+                                                conn_id, stream_id, e
+                                            );
+                                        }
+                                        debug!(
+                                            "conn {} stream {}: TCP connected to {}",
+                                            conn_id, stream_id, target_addr
+                                        );
+                                        state.tcp_stream = Some(tcp);
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "conn {} stream {}: TCP connect failed: {}",
+                                            conn_id, stream_id, e
+                                        );
+                                        streams.remove(&stream_key);
+                                        break; // Exit read loop for this stream
+                                    }
                                 }
-                                Err(e) => {
+                            }
+
+                            // Forward data to TCP target
+                            if let Some(ref mut tcp) = state.tcp_stream {
+                                if let Err(e) = tcp.write_all(&read_buf[..n]).await {
                                     warn!(
-                                        "conn {} stream {}: TCP connect failed: {}",
+                                        "conn {} stream {}: TCP write failed: {}",
                                         conn_id, stream_id, e
                                     );
                                     streams.remove(&stream_key);
-                                    continue;
+                                    break; // Exit read loop for this stream
+                                } else {
+                                    // Flush to ensure data is actually sent
+                                    if let Err(e) = tcp.flush().await {
+                                        warn!(
+                                            "conn {} stream {}: TCP flush failed: {}",
+                                            conn_id, stream_id, e
+                                        );
+                                        streams.remove(&stream_key);
+                                        break;
+                                    }
+                                    state.tx_bytes += n as u64;
+                                    debug!(
+                                        "conn {} stream {}: TCP wrote {} bytes (total: {})",
+                                        conn_id, stream_id, n, state.tx_bytes
+                                    );
                                 }
                             }
-                        }
 
-                        // Forward data to TCP target
-                        if let Some(ref mut tcp) = state.tcp_stream {
-                            if let Err(e) = tcp.write_all(&read_buf[..n]).await {
-                                warn!(
-                                    "conn {} stream {}: TCP write failed: {}",
-                                    conn_id, stream_id, e
-                                );
-                                streams.remove(&stream_key);
-                            } else {
-                                state.tx_bytes += n as u64;
+                            // Handle stream finish
+                            if fin {
+                                if let Some(mut state) = streams.remove(&stream_key) {
+                                    if let Some(tcp) = state.tcp_stream.take() {
+                                        sync_shutdown_tcp(tcp);
+                                    }
+                                }
+                                break; // Stream finished, exit loop
                             }
                         }
-
-                        // Handle stream finish
-                        if fin {
+                        Ok((0, fin)) if fin => {
+                            // Stream finished with no data
+                            let stream_key = (conn_id, stream_id);
                             if let Some(mut state) = streams.remove(&stream_key) {
-                                if let Some(ref mut tcp) = state.tcp_stream {
-                                    let _ = tcp.shutdown().await;
+                                if let Some(tcp) = state.tcp_stream.take() {
+                                    sync_shutdown_tcp(tcp);
                                 }
                             }
+                            break;
                         }
-                    }
-                    Ok((_, true)) => {
-                        // Stream finished with no data
-                        let stream_key = (conn_id, stream_id);
-                        if let Some(mut state) = streams.remove(&stream_key) {
-                            if let Some(ref mut tcp) = state.tcp_stream {
-                                let _ = tcp.shutdown().await;
+                        Ok((0, _)) => {
+                            // No more data available, exit loop
+                            if read_count > 0 {
+                                debug!(
+                                    "conn {} stream {}: no more data after {} reads",
+                                    conn_id, stream_id, read_count
+                                );
                             }
+                            break;
+                        }
+                        Ok((_, true)) => {
+                            // Stream finished with no data
+                            debug!("conn {} stream {}: stream finished", conn_id, stream_id);
+                            let stream_key = (conn_id, stream_id);
+                            if let Some(mut state) = streams.remove(&stream_key) {
+                                if let Some(tcp) = state.tcp_stream.take() {
+                                    sync_shutdown_tcp(tcp);
+                                }
+                            }
+                            break;
+                        }
+                        Ok(_) => {
+                            // Should not happen, but break anyway
+                            debug!("conn {} stream {}: unexpected Ok variant", conn_id, stream_id);
+                            break;
+                        }
+                        Err(e) => {
+                            let err_str = e.to_string();
+                            // "Done" means no more data available - this is normal, not an error
+                            if err_str.contains("Done") {
+                                if read_count > 0 {
+                                    debug!(
+                                        "conn {} stream {}: no more data after {} reads (Done)",
+                                        conn_id, stream_id, read_count
+                                    );
+                                }
+                            } else {
+                                // Real error - log and continue
+                                debug!("conn {} stream {}: stream_read error: {}", conn_id, stream_id, e);
+                            }
+                            break;
                         }
                     }
-                    Ok(_) => {}
-                    Err(_) => break,
                 }
             }
         }

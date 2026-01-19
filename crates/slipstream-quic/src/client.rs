@@ -263,6 +263,8 @@ impl ClientConnection {
 
     /// Write data to a stream.
     pub fn stream_write(&mut self, stream_id: u64, data: &[u8], fin: bool) -> Result<usize, Error> {
+        // Process connections first to update flow control state
+        let _ = self.endpoint.process_connections();
         if let Some(conn) = self.endpoint.conn_get_mut(self.conn_id) {
             conn.stream_write(stream_id, Bytes::copy_from_slice(data), fin)
                 .map_err(|e| Error::Stream(e.to_string()))
@@ -294,6 +296,15 @@ impl ClientConnection {
             .filter(|(_, s)| s.readable)
             .map(|(id, _)| *id)
             .collect()
+    }
+
+    /// Get stream write capacity (available flow control credits).
+    pub fn stream_capacity(&mut self, stream_id: u64) -> usize {
+        if let Some(conn) = self.endpoint.conn_get_mut(self.conn_id) {
+            conn.stream_capacity(stream_id).unwrap_or(0)
+        } else {
+            0
+        }
     }
 
     /// Drain path events.

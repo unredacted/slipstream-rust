@@ -214,14 +214,23 @@ impl TransportHandler for ServerHandler {
         tracing::info!("Server connection established: {}", conn_id);
 
         let peer = conn.paths_iter().next().map(|p| p.remote);
-        self.state.borrow_mut().connections.insert(
-            conn_id,
-            ConnectionInfo {
-                peer_addr: peer.unwrap_or_else(|| "0.0.0.0:0".parse().unwrap()),
-                ready: true,
-                streams: HashMap::new(),
-            },
-        );
+        let mut state = self.state.borrow_mut();
+        
+        // Check if connection already exists (from on_stream_created)
+        // If so, just update ready flag and peer_addr; otherwise create new entry
+        if let Some(conn_info) = state.connections.get_mut(&conn_id) {
+            conn_info.ready = true;
+            conn_info.peer_addr = peer.unwrap_or_else(|| "0.0.0.0:0".parse().unwrap());
+        } else {
+            state.connections.insert(
+                conn_id,
+                ConnectionInfo {
+                    peer_addr: peer.unwrap_or_else(|| "0.0.0.0:0".parse().unwrap()),
+                    ready: true,
+                    streams: HashMap::new(),
+                },
+            );
+        }
     }
 
     fn on_conn_closed(&mut self, conn: &mut Connection) {
@@ -234,15 +243,23 @@ impl TransportHandler for ServerHandler {
         let conn_id = conn.index().unwrap_or(0);
         tracing::debug!("Server stream {} created on conn {}", stream_id, conn_id);
 
-        if let Some(conn_info) = self.state.borrow_mut().connections.get_mut(&conn_id) {
-            conn_info.streams.insert(
-                stream_id,
-                StreamState {
-                    readable: false,
-                    writable: true,
-                },
-            );
-        }
+        let mut state = self.state.borrow_mut();
+        // Create connection entry if it doesn't exist (stream events can arrive before conn_established)
+        let conn_info = state.connections.entry(conn_id).or_insert_with(|| {
+            let peer = conn.paths_iter().next().map(|p| p.remote);
+            ConnectionInfo {
+                peer_addr: peer.unwrap_or_else(|| "0.0.0.0:0".parse().unwrap()),
+                ready: false, // Will be set to true by on_conn_established
+                streams: HashMap::new(),
+            }
+        });
+        conn_info.streams.insert(
+            stream_id,
+            StreamState {
+                readable: false,
+                writable: true,
+            },
+        );
     }
 
     fn on_stream_readable(&mut self, conn: &mut Connection, stream_id: u64) {

@@ -3,6 +3,12 @@
 //! This module provides the QUIC client runtime using the pure-Rust tquic library.
 //! The tquic runtime is now the default (replacing the legacy picoquic FFI).
 
+// TODO(flow-control): The pending_data buffer approach works but is not optimal.
+//   - Should use stream_writable_iter() to check which streams can accept data
+//   - stream_capacity() consistently returns 0 but data still flows via tquic
+//   - Consider using on_stream_writable callback instead of polling
+//   - Need to properly acknowledge received data to open flow control window
+
 mod path;
 
 use self::path::{
@@ -55,6 +61,8 @@ struct StreamState {
     queued_bytes: usize,
     rx_bytes: u64,
     tx_bytes: u64,
+    /// Pending data that couldn't be written due to flow control.
+    pending_data: Vec<u8>,
 }
 
 /// Run the client.
@@ -326,6 +334,42 @@ pub async fn run_client(config: &TquicClientConfig<'_>) -> Result<i32, ClientErr
             )?;
         }
 
+        // Try to write pending data for streams with available capacity
+        for (stream_id, stream) in streams.iter_mut() {
+            if !stream.pending_data.is_empty() {
+                let capacity = conn.stream_capacity(*stream_id);
+                tracing::debug!(
+                    "stream {} pending={} capacity={}",
+                    stream_id,
+                    stream.pending_data.len(),
+                    capacity
+                );
+                if capacity > 0 {
+                    let write_len = std::cmp::min(capacity, stream.pending_data.len());
+                    let data_to_write = stream.pending_data.drain(..write_len).collect::<Vec<_>>();
+                    match conn.stream_write(*stream_id, &data_to_write, false) {
+                        Ok(written) => {
+                            stream.tx_bytes = stream.tx_bytes.saturating_add(written as u64);
+                            tracing::debug!("stream {} wrote {} bytes", stream_id, written);
+                            // Put unwritten data back at front
+                            if written < data_to_write.len() {
+                                let mut remaining = data_to_write[written..].to_vec();
+                                remaining.append(&mut stream.pending_data);
+                                stream.pending_data = remaining;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::debug!("stream {} write error: {}", stream_id, e);
+                            // Put data back in pending buffer
+                            let mut remaining = data_to_write;
+                            remaining.append(&mut stream.pending_data);
+                            stream.pending_data = remaining;
+                        }
+                    }
+                }
+            }
+        }
+
         // Poll for outgoing packets
         let packets = conn.poll_send();
         if packets.is_empty() {
@@ -417,6 +461,7 @@ fn handle_command(
                             queued_bytes: 0,
                             rx_bytes: 0,
                             tx_bytes: 0,
+                            pending_data: Vec::new(),
                         },
                     );
                     if debug_streams {
@@ -444,11 +489,42 @@ fn handle_command(
             }
         }
         Command::StreamData { stream_id, data } => {
-            if let Err(e) = conn.stream_write(stream_id, &data, false) {
-                warn!("Failed to write to stream {}: {}", stream_id, e);
-                streams.remove(&stream_id);
-            } else if let Some(stream) = streams.get_mut(&stream_id) {
-                stream.tx_bytes = stream.tx_bytes.saturating_add(data.len() as u64);
+            // Get or append to pending data buffer
+            let data_to_write = if let Some(stream) = streams.get_mut(&stream_id) {
+                if !stream.pending_data.is_empty() {
+                    stream.pending_data.extend_from_slice(&data);
+                    std::mem::take(&mut stream.pending_data)
+                } else {
+                    data
+                }
+            } else {
+                return Ok(());
+            };
+
+            match conn.stream_write(stream_id, &data_to_write, false) {
+                Ok(written) => {
+                    if let Some(stream) = streams.get_mut(&stream_id) {
+                        stream.tx_bytes = stream.tx_bytes.saturating_add(written as u64);
+                        // Buffer remaining data if partial write
+                        if written < data_to_write.len() {
+                            stream.pending_data = data_to_write[written..].to_vec();
+                        }
+                    }
+                }
+                Err(e) => {
+                    // Check if this is a flow control block ("Done" error)
+                    let err_str = e.to_string();
+                    if err_str.contains("Done") {
+                        // Flow control blocked - buffer the data for later
+                        if let Some(stream) = streams.get_mut(&stream_id) {
+                            stream.pending_data = data_to_write;
+                        }
+                    } else {
+                        // Actual error - remove the stream
+                        warn!("Failed to write to stream {}: {}", stream_id, e);
+                        streams.remove(&stream_id);
+                    }
+                }
             }
         }
         Command::StreamClosed { stream_id } => {

@@ -2,7 +2,6 @@
 members = [
   "crates/slipstream-core",
   "crates/slipstream-dns",
-  "crates/slipstream-ffi",
   "crates/slipstream-quic",
   "crates/slipstream-client",
   "crates/slipstream-server",

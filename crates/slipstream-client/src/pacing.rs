@@ -1,9 +1,18 @@
-use slipstream_ffi::picoquic::picoquic_path_quality_t;
+#![allow(dead_code)]
 
 // Pacing gain tuning for the poll-based pacing loop.
 const PACING_GAIN_BASE: f64 = 1.0;
 const PACING_GAIN_PROBE: f64 = 1.25;
 const PACING_GAIN_EPSILON: f64 = 0.05;
+
+/// Path quality metrics used for pacing calculations.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct PathQuality {
+    pub(crate) rtt: u64,
+    pub(crate) cwin: u64,
+    pub(crate) bytes_in_transit: u64,
+    pub(crate) pacing_rate: u64,
+}
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct PacingBudgetSnapshot {
@@ -31,7 +40,7 @@ impl PacingPollBudget {
 
     pub(crate) fn target_inflight(
         &mut self,
-        quality: &picoquic_path_quality_t,
+        quality: &PathQuality,
         rtt_proxy_us: u64,
     ) -> PacingBudgetSnapshot {
         let pacing_rate = quality.pacing_rate;

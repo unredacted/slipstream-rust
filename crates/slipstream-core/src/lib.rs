@@ -5,6 +5,39 @@ pub mod stream;
 pub mod tcp;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, ToSocketAddrs};
 
+// Error codes for stream handling
+pub const SLIPSTREAM_INTERNAL_ERROR: u64 = 0x101;
+pub const SLIPSTREAM_FILE_CANCEL_ERROR: u64 = 0x105;
+
+/// Resolver operating mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum ResolverMode {
+    Recursive = 1,
+    Authoritative = 2,
+}
+
+/// Resolver specification with address and mode.
+#[derive(Debug, Clone)]
+pub struct ResolverSpec {
+    pub resolver: HostPort,
+    pub mode: ResolverMode,
+}
+
+/// Client configuration.
+#[derive(Debug)]
+pub struct ClientConfig<'a> {
+    pub tcp_listen_port: u16,
+    pub resolvers: &'a [ResolverSpec],
+    pub domain: &'a str,
+    pub cert: Option<&'a str>,
+    pub congestion_control: Option<&'a str>,
+    pub gso: bool,
+    pub keep_alive_interval: usize,
+    pub debug_poll: bool,
+    pub debug_streams: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AddressFamily {
     V4,

@@ -1,19 +1,17 @@
 mod dns;
 mod error;
 mod pacing;
-mod pinning;
 mod runtime;
-mod runtime_tquic;
 mod streams;
 
 use clap::{ArgGroup, CommandFactory, FromArgMatches, Parser};
-use slipstream_core::{normalize_domain, parse_host_port, AddressKind, HostPort};
-use slipstream_ffi::{ClientConfig, ResolverMode, ResolverSpec};
+use slipstream_core::{
+    normalize_domain, parse_host_port, AddressKind, HostPort, ResolverMode, ResolverSpec,
+};
 use tokio::runtime::Builder;
 use tracing_subscriber::EnvFilter;
 
-use runtime::run_client;
-use runtime_tquic::{run_client_tquic, TquicClientConfig};
+use runtime::{run_client, TquicClientConfig};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -57,9 +55,6 @@ struct Args {
     debug_poll: bool,
     #[arg(long = "debug-streams")]
     debug_streams: bool,
-    /// Use the tquic-based runtime instead of picoquic (experimental)
-    #[arg(long = "use-tquic", default_value_t = false)]
-    use_tquic: bool,
 }
 
 fn main() {
@@ -77,46 +72,22 @@ fn main() {
         .build()
         .expect("Failed to build Tokio runtime");
 
-    if args.use_tquic {
-        // Use tquic-based runtime (pure Rust)
-        tracing::info!("Using tquic runtime (experimental)");
-        let tquic_config = TquicClientConfig {
-            tcp_listen_port: args.tcp_listen_port,
-            resolvers: &resolvers,
-            domain: &args.domain,
-            cert: args.cert.as_deref(),
-            congestion_control: args.congestion_control.as_deref(),
-            gso: args.gso,
-            keep_alive_interval: args.keep_alive_interval as usize,
-            debug_poll: args.debug_poll,
-            debug_streams: args.debug_streams,
-        };
-        match runtime.block_on(run_client_tquic(&tquic_config)) {
-            Ok(code) => std::process::exit(code),
-            Err(err) => {
-                tracing::error!("Client error: {}", err);
-                std::process::exit(1);
-            }
-        }
-    } else {
-        // Use picoquic-based runtime (default)
-        let config = ClientConfig {
-            tcp_listen_port: args.tcp_listen_port,
-            resolvers: &resolvers,
-            congestion_control: args.congestion_control.as_deref(),
-            gso: args.gso,
-            domain: &args.domain,
-            cert: args.cert.as_deref(),
-            keep_alive_interval: args.keep_alive_interval as usize,
-            debug_poll: args.debug_poll,
-            debug_streams: args.debug_streams,
-        };
-        match runtime.block_on(run_client(&config)) {
-            Ok(code) => std::process::exit(code),
-            Err(err) => {
-                tracing::error!("Client error: {}", err);
-                std::process::exit(1);
-            }
+    let config = TquicClientConfig {
+        tcp_listen_port: args.tcp_listen_port,
+        resolvers: &resolvers,
+        domain: &args.domain,
+        cert: args.cert.as_deref(),
+        congestion_control: args.congestion_control.as_deref(),
+        gso: args.gso,
+        keep_alive_interval: args.keep_alive_interval as usize,
+        debug_poll: args.debug_poll,
+        debug_streams: args.debug_streams,
+    };
+    match runtime.block_on(run_client(&config)) {
+        Ok(code) => std::process::exit(code),
+        Err(err) => {
+            tracing::error!("Client error: {}", err);
+            std::process::exit(1);
         }
     }
 }

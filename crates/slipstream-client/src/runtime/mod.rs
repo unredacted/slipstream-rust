@@ -1,7 +1,7 @@
-//! tquic-based client runtime.
+//! QUIC client runtime using tquic.
 //!
-//! This module provides a QUIC client runtime using tquic instead of picoquic FFI.
-//! It mirrors the functionality of `runtime.rs` but uses the slipstream-quic crate.
+//! This module provides the QUIC client runtime using the pure-Rust tquic library.
+//! The tquic runtime is now the default (replacing the legacy picoquic FFI).
 
 mod path;
 
@@ -13,8 +13,8 @@ use crate::dns::{expire_inflight_polls, normalize_dual_stack_addr, resolve_resol
 use crate::error::ClientError;
 use crate::pacing::{cwnd_target_polls, inflight_packet_estimate};
 use crate::streams::{spawn_acceptor, Command};
+use slipstream_core::ResolverMode;
 use slipstream_dns::{build_qname, encode_query, QueryParams, CLASS_IN, RR_TXT};
-use slipstream_ffi::ResolverMode;
 use slipstream_quic::{Client, ClientConnection, Config as QuicConfig};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -36,7 +36,7 @@ const PACKET_LOOP_RECV_MAX: usize = 64;
 #[allow(dead_code)]
 pub struct TquicClientConfig<'a> {
     pub tcp_listen_port: u16,
-    pub resolvers: &'a [slipstream_ffi::ResolverSpec],
+    pub resolvers: &'a [slipstream_core::ResolverSpec],
     pub domain: &'a str,
     pub cert: Option<&'a str>,
     pub congestion_control: Option<&'a str>,
@@ -55,9 +55,8 @@ struct StreamState {
     tx_bytes: u64,
 }
 
-/// Run the client using tquic (1:1 port of run_client from runtime.rs).
-#[allow(dead_code)]
-pub async fn run_client_tquic(config: &TquicClientConfig<'_>) -> Result<i32, ClientError> {
+/// Run the client.
+pub async fn run_client(config: &TquicClientConfig<'_>) -> Result<i32, ClientError> {
     let domain_len = config.domain.len();
     let mtu = compute_mtu(domain_len)?;
     let mut resolvers = resolve_resolvers(config.resolvers, mtu, config.debug_poll)?;
@@ -214,7 +213,7 @@ pub async fn run_client_tquic(config: &TquicClientConfig<'_>) -> Result<i32, Cli
             // Handle incoming commands (new TCP connections, stream data)
             command = command_rx.recv() => {
                 if let Some(command) = command {
-                    handle_command_tquic(&mut conn, &mut streams, command, &command_tx, &data_notify, debug_streams)?;
+                    handle_command(&mut conn, &mut streams, command, &command_tx, &data_notify, debug_streams)?;
                 }
             }
 
@@ -260,7 +259,7 @@ pub async fn run_client_tquic(config: &TquicClientConfig<'_>) -> Result<i32, Cli
 
         // Drain pending commands
         while let Ok(command) = command_rx.try_recv() {
-            handle_command_tquic(
+            handle_command(
                 &mut conn,
                 &mut streams,
                 command,
@@ -329,8 +328,8 @@ pub async fn run_client_tquic(config: &TquicClientConfig<'_>) -> Result<i32, Cli
     Ok(0)
 }
 
-/// Handle a command in the tquic runtime.
-fn handle_command_tquic(
+/// Handle a command.
+fn handle_command(
     conn: &mut ClientConnection,
     streams: &mut HashMap<u64, StreamState>,
     command: Command,

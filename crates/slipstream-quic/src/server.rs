@@ -121,6 +121,32 @@ impl Server {
             .collect()
     }
 
+    /// Get all stream IDs for a connection.
+    pub fn streams(&self, conn_id: u64) -> Vec<u64> {
+        self.state
+            .borrow()
+            .connections
+            .get(&conn_id)
+            .map(|info| info.streams.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Get readable stream IDs for a connection.
+    pub fn readable_streams(&self, conn_id: u64) -> Vec<u64> {
+        self.state
+            .borrow()
+            .connections
+            .get(&conn_id)
+            .map(|info| {
+                info.streams
+                    .iter()
+                    .filter(|(_, s)| s.readable)
+                    .map(|(id, _)| *id)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Read data from a stream on a connection.
     pub fn stream_read(
         &mut self,

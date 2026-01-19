@@ -12,7 +12,9 @@ pub use codec::{
     is_response,
 };
 pub use dots::{dotify, undotify};
-pub use fragment::{fragment_packet, is_fragmented, parse_fragment, FragmentBuffer, FRAGMENT_HEADER_SIZE};
+pub use fragment::{
+    fragment_packet, is_fragmented, parse_fragment, FragmentBuffer, FRAGMENT_HEADER_SIZE,
+};
 pub use types::{
     DecodeQueryError, DecodedQuery, DnsError, QueryParams, Question, Rcode, ResponseParams,
     CLASS_IN, EDNS_UDP_PAYLOAD, RR_A, RR_OPT, RR_TXT,

@@ -14,6 +14,7 @@ use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::net::{TcpStream, UdpSocket as TokioUdpSocket};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
@@ -94,7 +95,7 @@ struct Slot {
 
 /// Run the server.
 pub async fn run_server(config: &TquicServerConfig) -> Result<i32, TquicServerError> {
-    let _target_addr = resolve_host_port(&config.target_address)
+    let target_addr = resolve_host_port(&config.target_address)
         .map_err(|e| TquicServerError::new(e.to_string()))?;
 
     let (_command_tx, mut command_rx) = mpsc::unbounded_channel::<()>(); // Placeholder for commands
@@ -205,8 +206,8 @@ pub async fn run_server(config: &TquicServerConfig) -> Result<i32, TquicServerEr
         for conn_id in server.ready_connections() {
             let mut read_buf = vec![0u8; STREAM_READ_CHUNK_BYTES];
 
-            // Try to read from streams
-            for stream_id in 0..100u64 {
+            // Try to read from all known streams for this connection
+            for stream_id in server.streams(conn_id) {
                 match server.stream_read(conn_id, stream_id, &mut read_buf) {
                     Ok((n, fin)) if n > 0 => {
                         if debug_streams {
@@ -216,12 +217,58 @@ pub async fn run_server(config: &TquicServerConfig) -> Result<i32, TquicServerEr
                             );
                         }
 
-                        // Forward to target
-                        // TODO: Implement TCP forwarding to target_addr
+                        // Get or create TCP connection for this stream
+                        let stream_key = (conn_id, stream_id);
+                        let (write_tx, _) = mpsc::unbounded_channel();
+                        let state = streams.entry(stream_key).or_insert_with(|| StreamState {
+                            tcp_stream: None,
+                            write_tx,
+                            rx_bytes: 0,
+                            tx_bytes: 0,
+                        });
+
+                        // Open TCP connection if not already connected
+                        if state.tcp_stream.is_none() {
+                            match TcpStream::connect(target_addr).await {
+                                Ok(tcp) => {
+                                    debug!("conn {} stream {}: TCP connected to {}", conn_id, stream_id, target_addr);
+                                    state.tcp_stream = Some(tcp);
+                                }
+                                Err(e) => {
+                                    warn!("conn {} stream {}: TCP connect failed: {}", conn_id, stream_id, e);
+                                    streams.remove(&stream_key);
+                                    continue;
+                                }
+                            }
+                        }
+
+                        // Forward data to TCP target
+                        if let Some(ref mut tcp) = state.tcp_stream {
+                            if let Err(e) = tcp.write_all(&read_buf[..n]).await {
+                                warn!("conn {} stream {}: TCP write failed: {}", conn_id, stream_id, e);
+                                streams.remove(&stream_key);
+                            } else {
+                                state.tx_bytes += n as u64;
+                            }
+                        }
+
+                        // Handle stream finish
+                        if fin {
+                            if let Some(mut state) = streams.remove(&stream_key) {
+                                if let Some(ref mut tcp) = state.tcp_stream {
+                                    let _ = tcp.shutdown().await;
+                                }
+                            }
+                        }
                     }
                     Ok((_, true)) => {
-                        // Stream finished
-                        streams.remove(&(conn_id, stream_id));
+                        // Stream finished with no data
+                        let stream_key = (conn_id, stream_id);
+                        if let Some(mut state) = streams.remove(&stream_key) {
+                            if let Some(ref mut tcp) = state.tcp_stream {
+                                let _ = tcp.shutdown().await;
+                            }
+                        }
                     }
                     Ok(_) => {}
                     Err(_) => break,

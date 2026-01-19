@@ -36,6 +36,37 @@ pub(crate) fn spawn_acceptor(
     });
 }
 
+/// Spawn a task that reads TCP data and sends it as StreamData commands for QUIC forwarding.
+pub(crate) fn spawn_tcp_to_quic_reader(
+    stream_id: u64,
+    mut tcp_read: tokio::net::tcp::OwnedReadHalf,
+    command_tx: mpsc::UnboundedSender<Command>,
+) {
+    tokio::spawn(async move {
+        let mut buf = vec![0u8; STREAM_READ_CHUNK_BYTES];
+        loop {
+            match tcp_read.read(&mut buf).await {
+                Ok(0) => {
+                    // EOF - close the QUIC stream
+                    let _ = command_tx.send(Command::StreamClosed { stream_id });
+                    break;
+                }
+                Ok(n) => {
+                    let data = buf[..n].to_vec();
+                    if command_tx.send(Command::StreamData { stream_id, data }).is_err() {
+                        break;
+                    }
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => {
+                    let _ = command_tx.send(Command::StreamReadError { stream_id });
+                    break;
+                }
+            }
+        }
+    });
+}
+
 pub(crate) fn spawn_client_reader(
     stream_id: u64,
     mut read_half: tokio::net::tcp::OwnedReadHalf,

@@ -348,7 +348,7 @@ fn handle_command(
     conn: &mut ClientConnection,
     streams: &mut HashMap<u64, StreamState>,
     command: Command,
-    _command_tx: &mpsc::UnboundedSender<Command>,
+    command_tx: &mpsc::UnboundedSender<Command>,
     _data_notify: &Arc<Notify>,
     debug_streams: bool,
 ) -> Result<(), ClientError> {
@@ -372,7 +372,14 @@ fn handle_command(
                     } else {
                         info!("Accepted TCP stream {}", stream_id);
                     }
-                    // TODO: Spawn reader/writer tasks for the TCP stream
+
+                    // Split TCP stream and spawn reader to forward TCP→QUIC
+                    let (tcp_read, _tcp_write) = tcp_stream.into_split();
+                    crate::streams::spawn_tcp_to_quic_reader(
+                        stream_id,
+                        tcp_read,
+                        command_tx.clone(),
+                    );
                 }
                 Err(e) => {
                     warn!("Failed to open QUIC stream: {}", e);

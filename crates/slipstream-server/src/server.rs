@@ -13,8 +13,8 @@ use std::fmt;
 use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use tokio::net::{TcpStream, UdpSocket as TokioUdpSocket};
 use tokio::io::AsyncWriteExt;
+use tokio::net::{TcpStream, UdpSocket as TokioUdpSocket};
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
@@ -231,11 +231,17 @@ pub async fn run_server(config: &TquicServerConfig) -> Result<i32, TquicServerEr
                         if state.tcp_stream.is_none() {
                             match TcpStream::connect(target_addr).await {
                                 Ok(tcp) => {
-                                    debug!("conn {} stream {}: TCP connected to {}", conn_id, stream_id, target_addr);
+                                    debug!(
+                                        "conn {} stream {}: TCP connected to {}",
+                                        conn_id, stream_id, target_addr
+                                    );
                                     state.tcp_stream = Some(tcp);
                                 }
                                 Err(e) => {
-                                    warn!("conn {} stream {}: TCP connect failed: {}", conn_id, stream_id, e);
+                                    warn!(
+                                        "conn {} stream {}: TCP connect failed: {}",
+                                        conn_id, stream_id, e
+                                    );
                                     streams.remove(&stream_key);
                                     continue;
                                 }
@@ -245,7 +251,10 @@ pub async fn run_server(config: &TquicServerConfig) -> Result<i32, TquicServerEr
                         // Forward data to TCP target
                         if let Some(ref mut tcp) = state.tcp_stream {
                             if let Err(e) = tcp.write_all(&read_buf[..n]).await {
-                                warn!("conn {} stream {}: TCP write failed: {}", conn_id, stream_id, e);
+                                warn!(
+                                    "conn {} stream {}: TCP write failed: {}",
+                                    conn_id, stream_id, e
+                                );
                                 streams.remove(&stream_key);
                             } else {
                                 state.tx_bytes += n as u64;

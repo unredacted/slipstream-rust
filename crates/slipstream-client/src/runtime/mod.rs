@@ -427,14 +427,14 @@ fn handle_command(
 
                     // Split TCP stream and spawn reader/writer for bidirectional forwarding
                     let (tcp_read, tcp_write) = tcp_stream.into_split();
-                    
+
                     // TCP→QUIC: Read TCP data and send to QUIC stream
                     crate::streams::spawn_tcp_to_quic_reader(
                         stream_id,
                         tcp_read,
                         command_tx.clone(),
                     );
-                    
+
                     // QUIC→TCP: Write data from QUIC stream to TCP
                     crate::streams::spawn_quic_to_tcp_writer(tcp_write, write_rx);
                 }

@@ -53,7 +53,10 @@ pub(crate) fn spawn_tcp_to_quic_reader(
                 }
                 Ok(n) => {
                     let data = buf[..n].to_vec();
-                    if command_tx.send(Command::StreamData { stream_id, data }).is_err() {
+                    if command_tx
+                        .send(Command::StreamData { stream_id, data })
+                        .is_err()
+                    {
                         break;
                     }
                 }

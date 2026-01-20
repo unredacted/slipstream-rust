@@ -63,6 +63,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        include:
           - name: rust-rust
             script: run_rust_rust.sh
             domains: ""

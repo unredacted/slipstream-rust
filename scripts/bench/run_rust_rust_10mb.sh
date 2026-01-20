@@ -156,135 +156,31 @@ e2e_report() {
   local start_log="$2"
   local end_log="$3"
   local bytes="$4"
-  python3 - "$start_log" "$end_log" "$bytes" "$label" <<'PY'
-import json
-import sys
-
-start_path, end_path, bytes_s, label = sys.argv[1:5]
-
-def load_done(path: str):
-    with open(path, "r", encoding="utf-8") as handle:
-        for line in handle:
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if event.get("event") == "done":
-                return event
-    return None
-
-start = load_done(start_path)
-end = load_done(end_path)
-if not start or not end:
-    print(f"{label}: missing timing data")
-    raise SystemExit(0)
-start_ts = start.get("first_payload_ts")
-end_ts = end.get("last_payload_ts")
-if start_ts is None or end_ts is None:
-    print(f"{label}: missing payload timestamps")
-    raise SystemExit(0)
-elapsed = end_ts - start_ts
-if elapsed <= 0:
-    print(f"{label}: invalid timing window secs={elapsed:.6f}")
-    raise SystemExit(0)
-bytes_val = int(bytes_s)
-mib = bytes_val / (1024 * 1024)
-mib_s = mib / elapsed
-print(f"{label}: bytes={bytes_val} secs={elapsed:.3f} MiB/s={mib_s:.2f}")
-PY
+  "${ROOT_DIR}/target/release/slipstream-bench" e2e-report \
+    --label "${label}" \
+    --start-log "${start_log}" \
+    --end-log "${end_log}" \
+    --bytes "${bytes}" || true
 }
 
 enforce_min_avg() {
-  python3 - "$RUN_DIR" "$TRANSFER_BYTES" "$MIN_AVG_MIB_S" "$MIN_AVG_MIB_S_EXFIL" "$MIN_AVG_MIB_S_DOWNLOAD" "$RUN_EXFIL" "$RUN_DOWNLOAD" <<'PY'
-import json
-import pathlib
-import sys
-
-run_dir = pathlib.Path(sys.argv[1])
-bytes_val = int(sys.argv[2])
-min_avg = sys.argv[3]
-min_exfil = float(sys.argv[4])
-min_download = float(sys.argv[5])
-run_exfil = int(sys.argv[6]) != 0
-run_download = int(sys.argv[7]) != 0
-
-def load_done(path: pathlib.Path):
-    try:
-        data = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return None
-    for line in data:
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if event.get("event") == "done":
-            return event
-    return None
-
-def e2e_mib_s(start_log: pathlib.Path, end_log: pathlib.Path):
-    start = load_done(start_log)
-    end = load_done(end_log)
-    if not start or not end:
-        return None
-    start_ts = start.get("first_payload_ts")
-    end_ts = end.get("last_payload_ts")
-    if start_ts is None or end_ts is None:
-        return None
-    elapsed = end_ts - start_ts
-    if elapsed <= 0:
-        return None
-    mib = bytes_val / (1024 * 1024)
-    return mib / elapsed
-
-def collect(case: str):
-    values = []
-    for path in run_dir.glob(f"**/{case}"):
-        if not path.is_dir():
-            continue
-        if case == "exfil":
-            start_log = path / "bench.jsonl"
-            end_log = path / "target.jsonl"
-        else:
-            start_log = path / "target.jsonl"
-            end_log = path / "bench.jsonl"
-        if start_log.exists() and end_log.exists():
-            rate = e2e_mib_s(start_log, end_log)
-            if rate is not None:
-                values.append(rate)
-    return values
-
-failed = False
-if run_exfil:
-    threshold = min_exfil
-    if min_avg:
-        threshold = float(min_avg)
-    exfil_rates = collect("exfil")
-    if not exfil_rates:
-        print("exfil avg: missing timing data")
-        failed = True
-    else:
-        exfil_avg = sum(exfil_rates) / len(exfil_rates)
-        print(f"exfil avg MiB/s: {exfil_avg:.2f} (min {threshold:.2f})")
-        if exfil_avg < threshold:
-            failed = True
-
-if run_download:
-    threshold = min_download
-    if min_avg:
-        threshold = float(min_avg)
-    download_rates = collect("download")
-    if not download_rates:
-        print("download avg: missing timing data")
-        failed = True
-    else:
-        download_avg = sum(download_rates) / len(download_rates)
-        print(f"download avg MiB/s: {download_avg:.2f} (min {threshold:.2f})")
-        if download_avg < threshold:
-            failed = True
-
-raise SystemExit(1 if failed else 0)
-PY
+  local args=(--run-dir "${RUN_DIR}" --bytes "${TRANSFER_BYTES}")
+  if [[ -n "${MIN_AVG_MIB_S}" ]]; then
+    args+=(--min-avg "${MIN_AVG_MIB_S}")
+  fi
+  if [[ -n "${MIN_AVG_MIB_S_EXFIL}" ]]; then
+    args+=(--min-avg-exfil "${MIN_AVG_MIB_S_EXFIL}")
+  fi
+  if [[ -n "${MIN_AVG_MIB_S_DOWNLOAD}" ]]; then
+    args+=(--min-avg-download "${MIN_AVG_MIB_S_DOWNLOAD}")
+  fi
+  if [[ "${RUN_EXFIL}" == "0" ]]; then
+    args+=(--run-exfil false)
+  fi
+  if [[ "${RUN_DOWNLOAD}" == "0" ]]; then
+    args+=(--run-download false)
+  fi
+  "${ROOT_DIR}/target/release/slipstream-bench" enforce-min-avg "${args[@]}"
 }
 
 wait_for_log() {
@@ -384,22 +280,22 @@ start_target() {
   local preface_bytes="$3"
   local target_json="${RUN_DIR}/target_${label}.jsonl"
   local target_log="${RUN_DIR}/target_${label}.log"
-  local target_args=(
-    --listen "127.0.0.1:${TCP_TARGET_PORT}"
-    --mode "${target_mode}"
-    --bytes "${TRANSFER_BYTES}"
-    --chunk-size "${CHUNK_SIZE}"
-    --timeout "${SOCKET_TIMEOUT}"
-    --log "${target_json}"
-  )
-  if [[ "${preface_bytes}" -gt 0 ]]; then
-    target_args+=(--preface-bytes "${preface_bytes}")
+  
+  # Map tcp_bench.py modes to slipstream-bench subcommands
+  local bench_cmd
+  local bench_args=(--listen "127.0.0.1:${TCP_TARGET_PORT}" --bytes "${TRANSFER_BYTES}" --chunk-size "${CHUNK_SIZE}" --timeout "${SOCKET_TIMEOUT}" --log "${target_json}")
+  if [[ "${target_mode}" == "sink" ]]; then
+    bench_cmd="sink"
+  else
+    bench_cmd="source"
+    if [[ "${preface_bytes}" -gt 0 ]]; then
+      bench_args+=(--preface-bytes "${preface_bytes}")
+    fi
   fi
-  python3 "${ROOT_DIR}/scripts/bench/tcp_bench.py" server \
-    "${target_args[@]}" \
-    >"${target_log}" 2>&1 &
+  
+  "${ROOT_DIR}/target/release/slipstream-bench" "${bench_cmd}" "${bench_args[@]}" >"${target_log}" 2>&1 &
   TARGET_PID=$!
-  if ! wait_for_log "bench target (${label})" "${target_json}" '"event": "listening"'; then
+  if ! wait_for_log "bench target (${label})" "${target_json}" '"event":"listening"'; then
     return 1
   fi
 }
@@ -418,64 +314,30 @@ run_bench_client() {
   local preface_bytes="$3"
   local bench_json="${RUN_DIR}/bench_${label}.jsonl"
   local bench_log="${RUN_DIR}/bench_${label}.log"
-  local bench_args=(
-    --connect "127.0.0.1:${CLIENT_TCP_PORT}"
-    --mode "${client_mode}"
-    --bytes "${TRANSFER_BYTES}"
-    --chunk-size "${CHUNK_SIZE}"
-    --timeout "${SOCKET_TIMEOUT}"
-    --log "${bench_json}"
-  )
-  if [[ "${preface_bytes}" -gt 0 ]]; then
-    bench_args+=(--preface-bytes "${preface_bytes}")
+  
+  # Map tcp_bench.py modes to slipstream-bench subcommands
+  local bench_cmd
+  local bench_args=(--connect "127.0.0.1:${CLIENT_TCP_PORT}" --bytes "${TRANSFER_BYTES}" --chunk-size "${CHUNK_SIZE}" --timeout "${SOCKET_TIMEOUT}" --log "${bench_json}")
+  if [[ "${client_mode}" == "send" ]]; then
+    bench_cmd="send"
+  else
+    bench_cmd="recv"
+    if [[ "${preface_bytes}" -gt 0 ]]; then
+      bench_args+=(--preface-bytes "${preface_bytes}")
+    fi
   fi
-  if ! python3 "${ROOT_DIR}/scripts/bench/tcp_bench.py" client \
-    "${bench_args[@]}" \
-    >"${bench_log}" 2>&1; then
+  
+  if ! "${ROOT_DIR}/target/release/slipstream-bench" "${bench_cmd}" "${bench_args[@]}" >"${bench_log}" 2>&1; then
     echo "Bench transfer failed (${label}); see logs in ${RUN_DIR}." >&2
     return 1
   fi
 }
 
 extract_e2e_mib_s() {
-  python3 - "$1" "$2" "$3" <<'PY'
-import json
-import sys
-
-start_path, end_path, bytes_s = sys.argv[1:4]
-
-def load_done(path: str):
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            for line in handle:
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if event.get("event") == "done":
-                    return event
-    except OSError as exc:
-        print(f"Failed to read {path}: {exc}", file=sys.stderr)
-        raise SystemExit(1)
-    print(f"Missing done event in {path}", file=sys.stderr)
-    raise SystemExit(1)
-
-start = load_done(start_path)
-end = load_done(end_path)
-start_ts = start.get("first_payload_ts")
-end_ts = end.get("last_payload_ts")
-if start_ts is None or end_ts is None:
-    print("Missing payload timestamps", file=sys.stderr)
-    raise SystemExit(1)
-elapsed = end_ts - start_ts
-if elapsed <= 0:
-    print(f"Invalid timing window secs={elapsed:.6f}", file=sys.stderr)
-    raise SystemExit(1)
-
-bytes_val = int(bytes_s)
-mib_s = (bytes_val / (1024 * 1024)) / elapsed
-print(f"{mib_s:.2f}")
-PY
+  "${ROOT_DIR}/target/release/slipstream-bench" extract-mib-s \
+    --start-log "$1" \
+    --end-log "$2" \
+    --bytes "$3"
 }
 
 report_throughput() {
@@ -493,22 +355,10 @@ enforce_min_throughput() {
   if [[ -z "${threshold}" ]]; then
     return 0
   fi
-  python3 - "$label" "$value" "$threshold" <<'PY'
-import sys
-
-label, value_s, threshold_s = sys.argv[1:4]
-try:
-    value = float(value_s)
-    threshold = float(threshold_s)
-except ValueError:
-    print(f"Invalid threshold compare for {label}: {value_s} vs {threshold_s}", file=sys.stderr)
-    raise SystemExit(1)
-
-if value < threshold:
-    print(f"{label} mixed throughput {value:.2f} < minimum {threshold:.2f}", file=sys.stderr)
-    raise SystemExit(1)
-print(f"{label} mixed throughput minimum ok ({value:.2f} >= {threshold:.2f})")
-PY
+  "${ROOT_DIR}/target/release/slipstream-bench" enforce-min-throughput \
+    --label "${label}" \
+    --value "${value}" \
+    --threshold "${threshold}"
 }
 
 run_client_bench() {
@@ -575,7 +425,7 @@ run_client_bench() {
   extract_e2e_mib_s "${start_path}" "${end_path}" "${TRANSFER_BYTES}"
 }
 
-cargo build -p slipstream-server -p slipstream-client --release
+cargo build -p slipstream-server -p slipstream-client -p slipstream-bench --release
 
 run_case() {
   local case_name="$1"
@@ -610,28 +460,28 @@ run_case() {
     if [[ -n "${PROXY_JITTER_MS}" ]]; then
       proxy_args+=(--jitter-ms "${PROXY_JITTER_MS}")
     fi
-    if [[ -n "${PROXY_BURST_CORRELATION}" ]]; then
-      proxy_args+=(--burst-correlation "${PROXY_BURST_CORRELATION}")
-    fi
     if [[ -n "${PROXY_REORDER_PROB}" ]]; then
       proxy_args+=(--reorder-rate "${PROXY_REORDER_PROB}")
     fi
-    python3 "${ROOT_DIR}/scripts/interop/udp_capture_proxy.py" \
+    "${ROOT_DIR}/target/release/slipstream-bench" udp-proxy \
       "${proxy_args[@]}" \
       >"${case_dir}/dns_proxy.log" 2>&1 &
     PROXY_PID=$!
     resolver_port="${proxy_port}"
   fi
 
-  python3 "${ROOT_DIR}/scripts/bench/tcp_bench.py" server \
-    --listen "127.0.0.1:${TCP_TARGET_PORT}" \
-    --mode "${target_mode}" \
-    --bytes "${TRANSFER_BYTES}" \
-    --chunk-size "${CHUNK_SIZE}" \
-    --timeout "${SOCKET_TIMEOUT}" \
-    ${target_preface_args[@]+"${target_preface_args[@]}"} \
-    --log "${case_dir}/target.jsonl" \
-    >"${case_dir}/target.log" 2>&1 &
+  # Start target using slipstream-bench
+  local bench_cmd
+  local bench_args=(--listen "127.0.0.1:${TCP_TARGET_PORT}" --bytes "${TRANSFER_BYTES}" --chunk-size "${CHUNK_SIZE}" --timeout "${SOCKET_TIMEOUT}" --log "${case_dir}/target.jsonl")
+  if [[ "${target_mode}" == "sink" ]]; then
+    bench_cmd="sink"
+  else
+    bench_cmd="source"
+    if [[ -n "${target_preface_args[*]:-}" ]]; then
+      bench_args+=(${target_preface_args[@]})
+    fi
+  fi
+  "${ROOT_DIR}/target/release/slipstream-bench" "${bench_cmd}" "${bench_args[@]}" >"${case_dir}/target.log" 2>&1 &
   TARGET_PID=$!
 
   "${ROOT_DIR}/target/release/slipstream-server" \
@@ -658,15 +508,18 @@ run_case() {
   fi
   sleep 2
 
-  python3 "${ROOT_DIR}/scripts/bench/tcp_bench.py" client \
-    --connect "127.0.0.1:${CLIENT_TCP_PORT}" \
-    --mode "${client_mode}" \
-    --bytes "${TRANSFER_BYTES}" \
-    --chunk-size "${CHUNK_SIZE}" \
-    --timeout "${SOCKET_TIMEOUT}" \
-    ${preface_args[@]+"${preface_args[@]}"} \
-    --log "${case_dir}/bench.jsonl" \
-    | tee "${case_dir}/bench.log"
+  # Run client bench using slipstream-bench
+  local client_bench_cmd
+  local client_bench_args=(--connect "127.0.0.1:${CLIENT_TCP_PORT}" --bytes "${TRANSFER_BYTES}" --chunk-size "${CHUNK_SIZE}" --timeout "${SOCKET_TIMEOUT}" --log "${case_dir}/bench.jsonl")
+  if [[ "${client_mode}" == "send" ]]; then
+    client_bench_cmd="send"
+  else
+    client_bench_cmd="recv"
+    if [[ -n "${preface_args[*]:-}" ]]; then
+      client_bench_args+=(${preface_args[@]})
+    fi
+  fi
+  "${ROOT_DIR}/target/release/slipstream-bench" "${client_bench_cmd}" "${client_bench_args[@]}" 2>&1 | tee "${case_dir}/bench.log"
 
   wait "${TARGET_PID}" || {
     echo "Target ${case_name} server failed." >&2
@@ -734,21 +587,17 @@ run_mixed() {
         proxy_recursive_args+=(--jitter-ms "${PROXY_JITTER_MS}")
         proxy_authoritative_args+=(--jitter-ms "${PROXY_JITTER_MS}")
       fi
-      if [[ -n "${PROXY_BURST_CORRELATION}" ]]; then
-        proxy_recursive_args+=(--burst-correlation "${PROXY_BURST_CORRELATION}")
-        proxy_authoritative_args+=(--burst-correlation "${PROXY_BURST_CORRELATION}")
-      fi
       if [[ -n "${PROXY_REORDER_PROB}" ]]; then
         proxy_recursive_args+=(--reorder-rate "${PROXY_REORDER_PROB}")
         proxy_authoritative_args+=(--reorder-rate "${PROXY_REORDER_PROB}")
       fi
     fi
-    python3 "${ROOT_DIR}/scripts/interop/udp_capture_proxy.py" \
+    "${ROOT_DIR}/target/release/slipstream-bench" udp-proxy \
       "${proxy_recursive_args[@]}" \
       >"${RUN_DIR}/udp_proxy_recursive.log" 2>&1 &
     PROXY_RECURSIVE_PID=$!
 
-    python3 "${ROOT_DIR}/scripts/interop/udp_capture_proxy.py" \
+    "${ROOT_DIR}/target/release/slipstream-bench" udp-proxy \
       "${proxy_authoritative_args[@]}" \
       >"${RUN_DIR}/udp_proxy_authoritative.log" 2>&1 &
     PROXY_AUTHORITATIVE_PID=$!
@@ -791,43 +640,9 @@ run_mixed() {
   fi
 
   if [[ "${use_proxy}" == "1" ]]; then
-    python3 - "${RUN_DIR}/dns_recursive.jsonl" "${RUN_DIR}/dns_authoritative.jsonl" <<'PY'
-import json
-import sys
-
-paths = [("recursive", sys.argv[1]), ("authoritative", sys.argv[2])]
-failed = False
-
-for label, path in paths:
-    counts = {"client_to_server": 0, "server_to_client": 0}
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            for line in handle:
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                direction = entry.get("direction")
-                if direction in counts:
-                    counts[direction] += 1
-    except OSError as exc:
-        print(f"{label} capture missing ({path}): {exc}", file=sys.stderr)
-        failed = True
-        continue
-
-    missing = [direction for direction, total in counts.items() if total == 0]
-    if missing:
-        print(f"{label} capture missing directions: {missing} ({counts})", file=sys.stderr)
-        failed = True
-    else:
-        print(
-            f"{label} capture: client_to_server={counts['client_to_server']} "
-            f"server_to_client={counts['server_to_client']}"
-        )
-
-if failed:
-    raise SystemExit(1)
-PY
+    "${ROOT_DIR}/target/release/slipstream-bench" check-capture \
+      --recursive-log "${RUN_DIR}/dns_recursive.jsonl" \
+      --authoritative-log "${RUN_DIR}/dns_authoritative.jsonl"
   fi
 
   if [[ "${RUN_DOWNLOAD}" != "0" ]]; then

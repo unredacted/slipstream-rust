@@ -60,7 +60,10 @@ if [[ ! -x "${SERVER_BIN}" || ! -x "${CLIENT_BIN}" ]]; then
   exit 1
 fi
 
-python3 "${ROOT_DIR}/scripts/interop/tcp_echo.py" \
+# Build slipstream-bench for echo and proxy
+cargo build -p slipstream-bench
+
+"${ROOT_DIR}/target/debug/slipstream-bench" echo \
   --listen "127.0.0.1:${TCP_TARGET_PORT}" \
   --log "${RUN_DIR}/tcp_echo.jsonl" \
   >"${RUN_DIR}/tcp_echo.log" 2>&1 &
@@ -75,7 +78,7 @@ ECHO_PID=$!
   >"${RUN_DIR}/server.log" 2>&1 &
 SERVER_PID=$!
 
-python3 "${ROOT_DIR}/scripts/interop/udp_capture_proxy.py" \
+"${ROOT_DIR}/target/debug/slipstream-bench" udp-proxy \
   --listen "127.0.0.1:${PROXY_PORT}" \
   --upstream "127.0.0.1:${DNS_LISTEN_PORT}" \
   --log "${RUN_DIR}/dns_capture.jsonl" \
@@ -91,33 +94,13 @@ CLIENT_PID=$!
 
 sleep 3
 
-if ! CLIENT_TCP_PORT="${CLIENT_TCP_PORT}" python3 - <<'PY'
-import os
-import socket
-import sys
-import time
+# Send test payload using nc
+for _ in $(seq 1 10); do
+  echo -n "slipstream-stage-a" | nc -w 2 127.0.0.1 "${CLIENT_TCP_PORT}" >/dev/null 2>&1 && break
+  sleep 1
+done
 
-host = "127.0.0.1"
-port = int(os.environ["CLIENT_TCP_PORT"])
-payload = b"slipstream-stage-a\n"
-
-for _ in range(10):
-    try:
-        with socket.create_connection((host, port), timeout=2) as sock:
-            sock.sendall(payload)
-            sock.shutdown(socket.SHUT_WR)
-            sock.settimeout(2)
-            try:
-                sock.recv(1024)
-            except socket.timeout:
-                pass
-        sys.exit(0)
-    except OSError:
-        time.sleep(1)
-
-sys.exit(1)
-PY
-then
+if ! grep -q '"event":"echo"' "${RUN_DIR}/tcp_echo.jsonl" 2>/dev/null; then
   echo "Probe failed: client/server did not exchange data" >&2
   exit 1
 fi

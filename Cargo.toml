@@ -5,6 +5,7 @@ members = [
   "crates/slipstream-quic",
   "crates/slipstream-client",
   "crates/slipstream-server",
+  "crates/slipstream-bench",
 ]
 resolver = "2"
 

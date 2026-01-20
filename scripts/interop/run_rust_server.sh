@@ -61,7 +61,10 @@ if [[ ! -x "${CLIENT_BIN}" ]]; then
   exit 1
 fi
 
-python3 "${ROOT_DIR}/scripts/interop/tcp_echo.py" \
+# Build slipstream-bench for echo and proxy
+cargo build -p slipstream-bench
+
+"${ROOT_DIR}/target/debug/slipstream-bench" echo \
   --listen "127.0.0.1:${TCP_TARGET_PORT}" \
   --log "${RUN_DIR}/tcp_echo.jsonl" \
   >"${RUN_DIR}/tcp_echo.log" 2>&1 &
@@ -79,7 +82,7 @@ SLIPSTREAM_BUILD_DIR="${BUILD_DIR}" \
   >"${RUN_DIR}/server.log" 2>&1 &
 SERVER_PID=$!
 
-python3 "${ROOT_DIR}/scripts/interop/udp_capture_proxy.py" \
+"${ROOT_DIR}/target/debug/slipstream-bench" udp-proxy \
   --listen "127.0.0.1:${PROXY_PORT}" \
   --upstream "127.0.0.1:${DNS_LISTEN_PORT}" \
   --log "${RUN_DIR}/dns_capture.jsonl" \
@@ -97,24 +100,10 @@ echo "Waiting for C client to accept connections..."
 sleep 2
 success=0
 for _ in $(seq 1 5); do
-  python3 - "${CLIENT_PAYLOAD}" "${CLIENT_TCP_PORT}" "${SOCKET_TIMEOUT}" <<'PY'
-import socket
-import sys
-import time
-
-payload = sys.argv[1].encode("utf-8")
-port = int(sys.argv[2])
-timeout = float(sys.argv[3])
-try:
-    with socket.create_connection(("127.0.0.1", port), timeout=timeout) as sock:
-        sock.settimeout(timeout)
-        sock.sendall(payload)
-        time.sleep(0.5)
-except Exception:
-    pass
-PY
+  # Send test payload via nc (netcat)
+  echo -n "${CLIENT_PAYLOAD}" | nc -w "${SOCKET_TIMEOUT}" 127.0.0.1 "${CLIENT_TCP_PORT}" >/dev/null 2>&1 || true
   sleep 2
-  if [[ -s "${RUN_DIR}/tcp_echo.jsonl" ]] && grep -q '"event": "echo"' "${RUN_DIR}/tcp_echo.jsonl"; then
+  if [[ -s "${RUN_DIR}/tcp_echo.jsonl" ]] && grep -q '"event":"echo"' "${RUN_DIR}/tcp_echo.jsonl"; then
     success=1
     break
   fi

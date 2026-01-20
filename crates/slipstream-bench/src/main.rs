@@ -346,7 +346,10 @@ impl LogWriter {
 fn summarize(label: &str, total: u64, elapsed: f64) {
     let mib = total as f64 / (1024.0 * 1024.0);
     let mib_s = if elapsed > 0.0 { mib / elapsed } else { 0.0 };
-    println!("{}: bytes={} secs={:.3} MiB/s={:.2}", label, total, elapsed, mib_s);
+    println!(
+        "{}: bytes={} secs={:.3} MiB/s={:.2}",
+        label, total, elapsed, mib_s
+    );
 }
 
 #[tokio::main]
@@ -371,7 +374,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             timeout,
             log,
         } => {
-            sink::run_server(listen, bytes, chunk_size, Duration::from_secs(timeout), &log).await?;
+            sink::run_server(
+                listen,
+                bytes,
+                chunk_size,
+                Duration::from_secs(timeout),
+                &log,
+            )
+            .await?;
         }
         Command::Source {
             listen,
@@ -398,8 +408,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             timeout,
             log,
         } => {
-            sink::run_client(connect, bytes, chunk_size, Duration::from_secs(timeout), &log)
-                .await?;
+            sink::run_client(
+                connect,
+                bytes,
+                chunk_size,
+                Duration::from_secs(timeout),
+                &log,
+            )
+            .await?;
         }
         Command::Recv {
             connect,

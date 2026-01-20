@@ -171,7 +171,10 @@ pub async fn run_server(config: &TquicServerConfig) -> Result<i32, TquicServerEr
             info!("Cleaning up {} TCP streams", stream_count);
             for ((conn_id, stream_id), mut state) in streams.drain() {
                 if let Some(tcp) = state.tcp_stream.take() {
-                    debug!("Shutting down TCP stream for conn {} stream {}", conn_id, stream_id);
+                    debug!(
+                        "Shutting down TCP stream for conn {} stream {}",
+                        conn_id, stream_id
+                    );
                     // Convert tokio stream to std stream for reliable synchronous shutdown.
                     // Tokio async shutdown doesn't reliably deliver buffered data.
                     match tcp.into_std() {
@@ -390,7 +393,10 @@ pub async fn run_server(config: &TquicServerConfig) -> Result<i32, TquicServerEr
                         }
                         Ok(_) => {
                             // Should not happen, but break anyway
-                            debug!("conn {} stream {}: unexpected Ok variant", conn_id, stream_id);
+                            debug!(
+                                "conn {} stream {}: unexpected Ok variant",
+                                conn_id, stream_id
+                            );
                             break;
                         }
                         Err(e) => {
@@ -405,7 +411,10 @@ pub async fn run_server(config: &TquicServerConfig) -> Result<i32, TquicServerEr
                                 }
                             } else {
                                 // Real error - log and continue
-                                debug!("conn {} stream {}: stream_read error: {}", conn_id, stream_id, e);
+                                debug!(
+                                    "conn {} stream {}: stream_read error: {}",
+                                    conn_id, stream_id, e
+                                );
                             }
                             break;
                         }

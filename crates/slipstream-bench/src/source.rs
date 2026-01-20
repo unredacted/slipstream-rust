@@ -1,6 +1,6 @@
 //! TCP source (send) implementation.
 
-use crate::{summarize, LogEvent, LogWriter, now_ts};
+use crate::{now_ts, summarize, LogEvent, LogWriter};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -77,9 +77,14 @@ pub async fn run_client(
     event.mode = Some("recv".to_string());
     log.log(&event);
 
-    let result =
-        recv_after_preface(socket, expected_bytes, chunk_size, preface_bytes, socket_timeout)
-            .await;
+    let result = recv_after_preface(
+        socket,
+        expected_bytes,
+        chunk_size,
+        preface_bytes,
+        socket_timeout,
+    )
+    .await;
 
     match result {
         Ok((total, elapsed, first_ts, last_ts)) => {
@@ -94,7 +99,9 @@ pub async fn run_client(
             summarize("client recv", total, elapsed);
 
             if expected_bytes > 0 && total < expected_bytes {
-                return Err(format!("received {} bytes, expected {}", total, expected_bytes).into());
+                return Err(
+                    format!("received {} bytes, expected {}", total, expected_bytes).into(),
+                );
             }
         }
         Err(e) => {

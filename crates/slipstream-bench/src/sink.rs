@@ -1,6 +1,6 @@
 //! TCP sink (receive) implementation.
 
-use crate::{summarize, LogEvent, LogWriter, now_ts};
+use crate::{now_ts, summarize, LogEvent, LogWriter};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -47,7 +47,9 @@ pub async fn run_server(
             summarize("server sink", total, elapsed);
 
             if expected_bytes > 0 && total < expected_bytes {
-                return Err(format!("received {} bytes, expected {}", total, expected_bytes).into());
+                return Err(
+                    format!("received {} bytes, expected {}", total, expected_bytes).into(),
+                );
             }
         }
         Err(e) => {

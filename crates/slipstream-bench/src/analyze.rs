@@ -49,10 +49,8 @@ pub fn e2e_throughput(
     let start_events = load_events(start_log)?;
     let end_events = load_events(end_log)?;
 
-    let start = find_done_event(&start_events)
-        .ok_or("Missing done event in start log")?;
-    let end = find_done_event(&end_events)
-        .ok_or("Missing done event in end log")?;
+    let start = find_done_event(&start_events).ok_or("Missing done event in start log")?;
+    let end = find_done_event(&end_events).ok_or("Missing done event in end log")?;
 
     let start_ts = start
         .first_payload_ts
@@ -169,7 +167,10 @@ pub fn check_capture(
     recursive_log: &Path,
     authoritative_log: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    for (label, path) in [("recursive", recursive_log), ("authoritative", authoritative_log)] {
+    for (label, path) in [
+        ("recursive", recursive_log),
+        ("authoritative", authoritative_log),
+    ] {
         let events = load_events(path)?;
         let mut c2s = 0u64;
         let mut s2c = 0u64;

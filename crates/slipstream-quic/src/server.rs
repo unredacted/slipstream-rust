@@ -215,7 +215,7 @@ impl TransportHandler for ServerHandler {
 
         let peer = conn.paths_iter().next().map(|p| p.remote);
         let mut state = self.state.borrow_mut();
-        
+
         // Check if connection already exists (from on_stream_created)
         // If so, just update ready flag and peer_addr; otherwise create new entry
         if let Some(conn_info) = state.connections.get_mut(&conn_id) {

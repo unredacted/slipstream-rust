@@ -36,7 +36,10 @@ impl PartialEq for PendingPacket {
 impl Ord for PendingPacket {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Reverse order for min-heap
-        other.send_at.cmp(&self.send_at).then(other.seq.cmp(&self.seq))
+        other
+            .send_at
+            .cmp(&self.send_at)
+            .then(other.seq.cmp(&self.seq))
     }
 }
 impl PartialOrd for PendingPacket {
@@ -64,7 +67,13 @@ enum DelayDist {
 }
 
 impl SortedDelayModel {
-    fn new(base_ms: f64, jitter_ms: f64, pool_size: usize, dist: DelayDist, seed: Option<u64>) -> Self {
+    fn new(
+        base_ms: f64,
+        jitter_ms: f64,
+        pool_size: usize,
+        dist: DelayDist,
+        seed: Option<u64>,
+    ) -> Self {
         let rng = match seed {
             Some(s) => StdRng::seed_from_u64(s),
             None => StdRng::from_entropy(),
@@ -109,25 +118,26 @@ impl SortedDelayModel {
 
     fn sample(&mut self, direction: &str) -> f64 {
         // Get or create the float_index for this direction
-        let float_index = *self.state.entry(direction.to_string()).or_insert_with(|| {
-            rand::random::<f64>() * self.pool_size as f64
-        });
-        
+        let float_index = *self
+            .state
+            .entry(direction.to_string())
+            .or_insert_with(|| rand::random::<f64>() * self.pool_size as f64);
+
         let idx = (float_index as usize) % self.pool_size;
-        
+
         // Check if we need to regenerate the pool
         if idx == 0 && float_index >= self.pool_size as f64 {
             self.generate_pool();
             self.state.insert(direction.to_string(), 0.0);
         }
-        
+
         let delay_ms = self.sorted_pool[idx];
-        
+
         // Update the index
         if let Some(fi) = self.state.get_mut(direction) {
             *fi += self.stride;
         }
-        
+
         delay_ms
     }
 }
@@ -193,7 +203,10 @@ impl ReorderController {
         recv_time: Instant,
         pkt: PendingPacket,
     ) -> Vec<PendingPacket> {
-        let state = self.state.entry(direction.to_string()).or_insert_with(ReorderState::new);
+        let state = self
+            .state
+            .entry(direction.to_string())
+            .or_insert_with(ReorderState::new);
         state.count += 1;
         if let Some(s) = self.stats.get_mut(direction) {
             s.total += 1;
@@ -228,7 +241,10 @@ impl ReorderController {
             let first = PendingPacket { send_at, ..pkt };
             let second_send_at = send_at + Duration::from_secs_f64(self.min_gap_s);
             let second_send_at = second_send_at.max(prev.send_at);
-            let second = PendingPacket { send_at: second_send_at, ..prev };
+            let second = PendingPacket {
+                send_at: second_send_at,
+                ..prev
+            };
             state.floor = second_send_at;
             if let Some(s) = self.stats.get_mut(direction) {
                 s.reordered += 1;
@@ -239,7 +255,10 @@ impl ReorderController {
             let scheduled_prev_at = prev.send_at.max(state.floor);
             state.floor = scheduled_prev_at;
             state.prev = Some(PendingPacket { send_at, ..pkt });
-            vec![PendingPacket { send_at: scheduled_prev_at, ..prev }]
+            vec![PendingPacket {
+                send_at: scheduled_prev_at,
+                ..prev
+            }]
         }
     }
 
@@ -261,7 +280,10 @@ impl ReorderController {
                 if now.duration_since(state.last_recv).as_secs_f64() >= self.idle_timeout_s {
                     let send_at = prev.send_at.max(state.floor);
                     state.floor = send_at;
-                    let pkt = PendingPacket { send_at, ..state.prev.take().unwrap() };
+                    let pkt = PendingPacket {
+                        send_at,
+                        ..state.prev.take().unwrap()
+                    };
                     entries.push((direction.clone(), pkt));
                 }
             }
@@ -272,7 +294,11 @@ impl ReorderController {
     fn print_stats(&self) {
         eprintln!("\n=== Reorder Statistics ===");
         for (direction, s) in &self.stats {
-            let pct = if s.total > 0 { s.reordered as f64 / s.total as f64 * 100.0 } else { 0.0 };
+            let pct = if s.total > 0 {
+                s.reordered as f64 / s.total as f64 * 100.0
+            } else {
+                0.0
+            };
             eprintln!("  {}: {}/{} ({:.4}%)", direction, s.reordered, s.total, pct);
         }
     }
@@ -303,35 +329,39 @@ pub async fn run(
     reorder_rate: f64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut log = LogWriter::open(log_path)?;
-    
+
     let socket = UdpSocket::bind(listen).await?;
-    
+
     eprintln!("UDP proxy listening on {}", listen);
     eprintln!("  Upstream: {}", upstream);
     eprintln!("  Delay: {}ms ± {}ms", delay_ms, jitter_ms);
     if reorder_rate > 0.0 {
         eprintln!("  Target reorder rate: {:.4}%", reorder_rate * 100.0);
     }
-    
-    let dist_type = if dist == "uniform" { DelayDist::Uniform } else { DelayDist::Normal };
+
+    let dist_type = if dist == "uniform" {
+        DelayDist::Uniform
+    } else {
+        DelayDist::Normal
+    };
     let mut delay_model = SortedDelayModel::new(delay_ms, jitter_ms, 20000, dist_type, seed);
     let mut reorder_ctrl = ReorderController::new(reorder_rate, 0.1, 50.0);
-    
+
     let mut last_client: Option<SocketAddr> = None;
     let mut packet_count = 0u64;
     let mut pending: BinaryHeap<PendingPacket> = BinaryHeap::new();
     let mut seq = 0u64;
     let mut buf = vec![0u8; 65535];
-    
+
     loop {
         let now = Instant::now();
-        
+
         // Release any idle packets from the reorder controller
         for (_direction, pkt) in reorder_ctrl.release_idle(now) {
             log_packet(&mut log, &pkt, pkt.data.len());
             pending.push(pkt);
         }
-        
+
         // Calculate timeout for next pending packet
         let timeout = if let Some(next) = pending.peek() {
             let now = Instant::now();
@@ -343,7 +373,7 @@ pub async fn run(
         } else {
             Duration::from_secs(3600) // Long timeout when nothing pending
         };
-        
+
         // Send any due packets
         while let Some(pkt) = pending.peek() {
             if pkt.send_at <= Instant::now() {
@@ -353,10 +383,10 @@ pub async fn run(
                 break;
             }
         }
-        
+
         // Wait for incoming packet or timeout
         let recv_result = tokio::time::timeout(timeout, socket.recv_from(&mut buf)).await;
-        
+
         match recv_result {
             Ok(Ok((len, addr))) => {
                 let data = buf[..len].to_vec();
@@ -366,12 +396,12 @@ pub async fn run(
                     last_client = Some(addr);
                     ("client_to_server", Some(upstream))
                 };
-                
+
                 let Some(dst) = dst else { continue };
-                
+
                 let natural_delay_ms = delay_model.sample(direction);
                 let send_at = Instant::now() + Duration::from_secs_f64(natural_delay_ms / 1000.0);
-                
+
                 seq += 1;
                 let pkt = PendingPacket {
                     send_at,
@@ -381,14 +411,14 @@ pub async fn run(
                     direction: direction.to_string(),
                     natural_delay_ms,
                 };
-                
+
                 // Process through reorder controller
                 let scheduled = reorder_ctrl.process(direction, Instant::now(), pkt);
                 for pkt in scheduled {
                     log_packet(&mut log, &pkt, len);
                     pending.push(pkt);
                 }
-                
+
                 packet_count += 1;
                 if max_packets > 0 && packet_count >= max_packets {
                     break;
@@ -402,7 +432,7 @@ pub async fn run(
             }
         }
     }
-    
+
     // Flush any held packets
     for direction in ["client_to_server", "server_to_client"] {
         if let Some(pkt) = reorder_ctrl.flush(direction) {
@@ -410,7 +440,7 @@ pub async fn run(
             pending.push(pkt);
         }
     }
-    
+
     // Drain any remaining packets
     while let Some(pkt) = pending.pop() {
         let delay = pkt.send_at.saturating_duration_since(Instant::now());
@@ -419,9 +449,9 @@ pub async fn run(
         }
         socket.send_to(&pkt.data, pkt.dst).await?;
     }
-    
+
     reorder_ctrl.print_stats();
-    
+
     Ok(())
 }
 
@@ -438,6 +468,9 @@ fn log_packet(log: &mut LogWriter, pkt: &PendingPacket, len: usize) {
     let line = serde_json::to_string(&event).unwrap_or_default();
     match log {
         LogWriter::Stdout => println!("{}", line),
-        LogWriter::File(f) => { let _ = writeln!(f, "{}", line); let _ = f.flush(); }
+        LogWriter::File(f) => {
+            let _ = writeln!(f, "{}", line);
+            let _ = f.flush();
+        }
     }
 }
